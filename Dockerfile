@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install system dependencies
 # --mount=type=cache 让 apt 缓存在构建器磁盘上，重建时不再重复下载
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
