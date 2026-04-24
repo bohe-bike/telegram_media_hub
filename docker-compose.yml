@@ -8,8 +8,6 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
-    env_file:
-      - ./config/.env
     volumes:
       - ./config:/app/config
       - media_data:/media
@@ -27,8 +25,6 @@ services:
     build: .
     container_name: media-hub-tg-worker
     restart: unless-stopped
-    env_file:
-      - ./config/.env
     volumes:
       - ./config:/app/config
       - media_data:/media
@@ -40,14 +36,12 @@ services:
     command: rq worker tg_download retry --url ${REDIS_URL:-redis://redis:6379/0} --with-scheduler
 
   # ==========================================
-  # External download worker
+  # External download worker (via MeTube)
   # ==========================================
   external-worker:
     build: .
     container_name: media-hub-external-worker
     restart: unless-stopped
-    env_file:
-      - ./config/.env
     volumes:
       - ./config:/app/config
       - media_data:/media
@@ -55,6 +49,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      metube:
         condition: service_healthy
     command: rq worker external_download retry --url ${REDIS_URL:-redis://redis:6379/0} --with-scheduler
 
@@ -97,7 +93,7 @@ services:
       retries: 5
 
   # ==========================================
-  # MeTube (optional - for web-based yt-dlp)
+  # MeTube — yt-dlp Web UI; handles all external link downloads
   # ==========================================
   metube:
     image: ghcr.io/alexta69/metube:latest
@@ -109,13 +105,15 @@ services:
       - media_data:/downloads
     environment:
       - DOWNLOAD_DIR=/downloads/external
+      - CREATE_CUSTOM_DIRS=true
+      - CLEAR_COMPLETED_AFTER=0
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/version', timeout=5)"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
 
 volumes:
   pg_data:
   redis_data:
   media_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${STORAGE_ROOT:-./media}

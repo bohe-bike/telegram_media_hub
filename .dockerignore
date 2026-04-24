@@ -1,12 +1,44 @@
-__pycache__
+# Secrets and sessions – never bake into the image
+config/.env
+config/config.toml
+sessions/
+*.session
+*.session-journal
+
+# Python cache
+__pycache__/
 *.pyc
 *.pyo
-.env
-sessions/*.session*
-media/
-.venv
-venv
-*.egg-info
-.git
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Dev / test artifacts
+.git/
 .gitignore
-*.md
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+
+# Local media data
+media/
+
+# Virtual environments
+.venv/
+venv/
+
+# Docs
+doc/
+README.md
+
+# Docker files themselves
+.dockerignore
+docker-compose.yml
+docker-compose*.yml
+
+# OS
+.DS_Store
+Thumbs.db

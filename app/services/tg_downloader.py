@@ -18,6 +18,7 @@ from typing import Callable, Optional
 
 from loguru import logger
 from pyrogram import Client, raw
+from pyrogram.errors import FloodWait
 from pyrogram.file_id import FileId, PHOTO_TYPES
 from pyrogram.session import Session
 
@@ -120,41 +121,48 @@ async def _parallel_stream(
 
     downloaded_bytes = 0
     lock = asyncio.Lock()
-    sem = asyncio.Semaphore(num_workers)
+    # Use a bounded queue so we never create more than num_workers*2 coroutines
+    # in flight at once – avoids memory pressure on very large files.
+    chunk_queue: asyncio.Queue[int] = asyncio.Queue()
+    for i in range(total_chunks):
+        chunk_queue.put_nowait(i)
 
     async def _fetch_chunk(idx: int) -> None:
         nonlocal downloaded_bytes
         offset = idx * CHUNK_SIZE
         limit = min(CHUNK_SIZE, file_size - offset)
 
-        async with sem:
-            for attempt in range(3):
-                try:
-                    resp = await session.invoke(
-                        raw.functions.upload.GetFile(
-                            location=location,
-                            offset=offset,
-                            limit=limit,
-                            precise=True,
-                        )
+        for attempt in range(5):
+            try:
+                resp = await session.invoke(
+                    raw.functions.upload.GetFile(
+                        location=location,
+                        offset=offset,
+                        limit=limit,
+                        precise=True,
                     )
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        raise
-                    logger.debug(
-                        f"Chunk {idx} attempt {attempt+1} failed: {e}")
-                    await asyncio.sleep(0.5 * (attempt + 1))
+                )
+                break
+            except FloodWait as fw:
+                wait_secs = fw.value + 1
+                logger.warning(
+                    f"Chunk {idx}: FloodWait {fw.value}s — sleeping {wait_secs}s"
+                )
+                await asyncio.sleep(wait_secs)
+            except Exception as e:
+                if attempt == 4:
+                    raise
+                logger.debug(f"Chunk {idx} attempt {attempt+1} failed: {e}")
+                await asyncio.sleep(1.0 * (attempt + 1))
 
-            data = resp.bytes
+        data = resp.bytes
 
-        # Write at the correct position (file handle per-write to avoid
-        # holding an fd across awaits)
-        with open(dest_path, "r+b") as f:
-            f.seek(offset)
-            f.write(data)
-
+        # Write at the correct position; use the shared lock to serialise
+        # seeks so a single open fd is reused across all writers.
         async with lock:
+            with open(dest_path, "r+b") as f:
+                f.seek(offset)
+                f.write(data)
             downloaded_bytes += len(data)
             if progress:
                 try:
@@ -162,8 +170,16 @@ async def _parallel_stream(
                 except Exception:
                     pass
 
-    tasks = [_fetch_chunk(i) for i in range(total_chunks)]
-    await asyncio.gather(*tasks)
+    async def _worker() -> None:
+        while True:
+            try:
+                idx = chunk_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            await _fetch_chunk(idx)
+            chunk_queue.task_done()
+
+    await asyncio.gather(*[_worker() for _ in range(num_workers)])
 
     # Verify file size
     actual = dest_path.stat().st_size

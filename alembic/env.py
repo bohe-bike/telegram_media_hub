@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import tomllib
 from logging.config import fileConfig
 from pathlib import Path
 
@@ -13,20 +14,28 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.core.database import Base
 from app.models.task import Task, Proxy  # noqa: F401 - ensure models are imported
 
-# Load environment variables from config/.env
+# Load database URL from config/config.toml (falls back to env var)
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
-ENV_FILE = CONFIG_DIR / ".env"
+TOML_FILE = CONFIG_DIR / "config.toml"
 
-if ENV_FILE.exists():
-    from dotenv import load_dotenv
-    load_dotenv(ENV_FILE)
+_toml_db_url: str | None = None
+if TOML_FILE.exists():
+    with open(TOML_FILE, "rb") as _f:
+        _toml = tomllib.load(_f)
+    # Support both flat key and nested sections
+    _toml_db_url = _toml.get("database_url")
+    if _toml_db_url is None:
+        for _v in _toml.values():
+            if isinstance(_v, dict) and "database_url" in _v:
+                _toml_db_url = _v["database_url"]
+                break
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Get database URL from environment variable or config
-db_url = os.environ.get("DATABASE_URL")
+# DATABASE_URL env var overrides the TOML value (useful in CI/CD / Docker)
+db_url = os.environ.get("DATABASE_URL", _toml_db_url)
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 

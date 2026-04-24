@@ -11,10 +11,10 @@ import time
 from pathlib import Path
 
 from loguru import logger
-from pyrogram import Client
 from sqlalchemy import update
 
 from app.core.database import async_session_factory
+from app.core.tg_client import get_worker_client
 from app.models.task import SourceType, Task, TaskStatus
 from app.services.notifier import notify_complete, notify_failed
 from app.services.tg_downloader import download_tg_file
@@ -68,27 +68,23 @@ async def _do_download(task_id: int):
 
     # ---- download ---------------------------------------------------
     try:
-        client = Client(
-            name=settings.tg_session_name,
-            api_id=settings.tg_api_id,
-            api_hash=settings.tg_api_hash,
-            workdir=str(settings.session_dir),
+        client = await get_worker_client()
+        if client is None:
+            raise RuntimeError("No Pyrogram client available – session missing or not configured")
+
+        start_time = time.time()
+
+        # Use parallel downloader (auto-fallback for small files)
+        await download_tg_file(
+            client=client,
+            file_id_str=file_id,
+            file_size=file_size,
+            dest_path=temp_file,
+            progress=lambda cur, tot: _progress_callback(
+                task_id, cur, tot),
         )
 
-        async with client:
-            start_time = time.time()
-
-            # Use parallel downloader (auto-fallback for small files)
-            await download_tg_file(
-                client=client,
-                file_id_str=file_id,
-                file_size=file_size,
-                dest_path=temp_file,
-                progress=lambda cur, tot: _progress_callback(
-                    task_id, cur, tot),
-            )
-
-            elapsed = time.time() - start_time
+        elapsed = time.time() - start_time
 
         # Move temp -> final
         if temp_file.exists():
@@ -155,11 +151,15 @@ async def _do_download(task_id: int):
 
 
 def _progress_callback(task_id: int, current: int, total: int):
-    """Log download progress (every ~10 %)."""
+    """Log download progress at every 10 % milestone."""
     if total > 0:
         pct = current * 100 / total
-        if int(pct) % 10 == 0:
-            logger.debug(f"Task #{task_id}: {pct:.0f}% ({current}/{total})")
+        # Use rounding to avoid logging the same milestone multiple times
+        # as floating-point values straddle the integer boundary.
+        milestone = round(pct / 10) * 10
+        prev_milestone = round((current - 1) * 100 / total / 10) * 10
+        if milestone != prev_milestone and milestone % 10 == 0:
+            logger.debug(f"Task #{task_id}: {milestone}% ({current}/{total})")
 
 
 def download_tg_media(task_id: int):

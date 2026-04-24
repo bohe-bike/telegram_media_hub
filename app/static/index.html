@@ -1,667 +1,1881 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Telegram Media Hub</title>
-<style>
-/* ========== reset & base ========== */
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0f1117;--bg2:#181b24;--bg3:#1e222d;
-  --border:#2a2e3b;--border-h:#3a3f50;
-  --text:#e4e6eb;--text2:#9ca0ab;--text3:#6b7080;
-  --accent:#3b82f6;--accent-h:#2563eb;
-  --green:#22c55e;--red:#ef4444;--yellow:#eab308;
-  --radius:8px;
-}
-html{font-size:14px}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
-
-/* ========== layout ========== */
-.shell{max-width:860px;margin:0 auto;padding:24px 16px}
-header{display:flex;align-items:center;gap:12px;margin-bottom:28px}
-header h1{font-size:1.4rem;font-weight:600}
-header .badge{font-size:.7rem;padding:2px 8px;border-radius:10px;
-  background:var(--green);color:#000;font-weight:600}
-header .badge.off{background:var(--red)}
-
-/* ========== tabs ========== */
-.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:24px}
-.tab{padding:10px 20px;cursor:pointer;color:var(--text2);font-weight:500;
-  border-bottom:2px solid transparent;transition:.15s}
-.tab:hover{color:var(--text)}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.pane{display:none}
-.pane.active{display:block}
-
-/* ========== card / form ========== */
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
-  padding:20px;margin-bottom:20px}
-.card h2{font-size:1.05rem;margin-bottom:16px;font-weight:600}
-.card h3{font-size:.92rem;margin:18px 0 10px;color:var(--text2);font-weight:500;
-  text-transform:uppercase;letter-spacing:.5px}
-.field{margin-bottom:14px}
-.field label{display:block;margin-bottom:4px;color:var(--text2);font-size:.85rem}
-.field input,.field textarea,.field select{width:100%;padding:9px 12px;
-  background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);
-  color:var(--text);font-size:.9rem;outline:none;transition:.15s}
-.field input:focus,.field textarea:focus{border-color:var(--accent)}
-.field .hint{font-size:.75rem;color:var(--text3);margin-top:3px}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-
-/* buttons */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:9px 22px;border:none;border-radius:var(--radius);font-size:.9rem;
-  font-weight:500;cursor:pointer;transition:.15s}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{background:var(--accent-h)}
-.btn-primary:disabled{opacity:.5;cursor:not-allowed}
-.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
-.btn-outline:hover{border-color:var(--text2);color:var(--text)}
-.btn-danger{background:var(--red);color:#fff}
-.btn-danger:hover{opacity:.85}
-.btn-group{display:flex;gap:10px;margin-top:18px}
-
-/* alerts */
-.alert{padding:12px 16px;border-radius:var(--radius);font-size:.88rem;margin-bottom:16px;display:none}
-.alert.ok{display:block;background:#22c55e20;border:1px solid #22c55e40;color:var(--green)}
-.alert.err{display:block;background:#ef444420;border:1px solid #ef444440;color:var(--red)}
-.alert.info{display:block;background:#3b82f620;border:1px solid #3b82f640;color:var(--accent)}
-.alert.warn{display:block;background:#eab30820;border:1px solid #eab30840;color:var(--yellow)}
-
-/* auth steps */
-.step{display:none}
-.step.active{display:block}
-.user-card{display:flex;align-items:center;gap:16px;padding:16px;
-  background:var(--bg3);border-radius:var(--radius)}
-.user-card .avatar{width:48px;height:48px;border-radius:50%;background:var(--accent);
-  display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:600;color:#fff}
-.user-card .info{flex:1}
-.user-card .name{font-weight:600}
-.user-card .meta{color:var(--text2);font-size:.85rem}
-
-/* task table */
-.tbl{width:100%;border-collapse:collapse;font-size:.85rem}
-.tbl th,.tbl td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
-.tbl th{color:var(--text2);font-weight:500;font-size:.78rem;text-transform:uppercase;letter-spacing:.4px}
-.tbl tr:hover td{background:var(--bg3)}
-.status{padding:2px 10px;border-radius:10px;font-size:.75rem;font-weight:600}
-.status.completed{background:#22c55e20;color:var(--green)}
-.status.downloading{background:#3b82f620;color:var(--accent)}
-.status.pending{background:#eab30820;color:var(--yellow)}
-.status.failed,.status.cancelled{background:#ef444420;color:var(--red)}
-.status.retrying{background:#f9731620;color:#f97316}
-.empty{text-align:center;color:var(--text3);padding:40px 0}
-
-/* proxy test results */
-.proxy-results{margin-top:10px}
-.proxy-row{display:flex;align-items:center;gap:10px;padding:8px 12px;
-  border-radius:var(--radius);margin-bottom:4px;font-size:.85rem;background:var(--bg3)}
-.proxy-row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.proxy-row .dot.ok{background:var(--green)}
-.proxy-row .dot.fail{background:var(--red)}
-.proxy-row .dot.wait{background:var(--text3);animation:pulse 1s infinite}
-.proxy-row .url{flex:1;color:var(--text);font-family:monospace;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.proxy-row .lat{color:var(--text2);min-width:70px;text-align:right}
-.proxy-row .err{color:var(--red);font-size:.78rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-
-/* spinner */
-.spin{display:inline-block;width:16px;height:16px;border:2px solid #fff4;
-  border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* responsive */
-@media(max-width:600px){.row{grid-template-columns:1fr}.tabs{overflow-x:auto}
-  .tab{white-space:nowrap;padding:10px 14px;font-size:.88rem}}
-</style>
-</head>
-<body>
-<div class="shell">
-
-<!-- header -->
-<header>
-  <h1>Telegram Media Hub</h1>
-  <span class="badge" id="hdr-badge">--</span>
-</header>
-
-<!-- tabs -->
-<div class="tabs">
-  <div class="tab active" data-pane="pane-settings">Settings</div>
-  <div class="tab" data-pane="pane-auth">TG Login</div>
-  <div class="tab" data-pane="pane-tasks">Tasks</div>
-</div>
-
-<!-- ===================== SETTINGS PANE ===================== -->
-<div id="pane-settings" class="pane active">
-  <div id="cfg-alert" class="alert"></div>
-  <form id="cfg-form" autocomplete="off">
-
-    <div class="card">
-      <h2>Telegram</h2>
-      <div class="row">
-        <div class="field">
-          <label>API ID</label>
-          <input name="tg_api_id" type="number" placeholder="123456">
-          <div class="hint">my.telegram.org -> API development tools</div>
-        </div>
-        <div class="field">
-          <label>API Hash</label>
-          <input name="tg_api_hash" placeholder="abcdef1234567890">
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>Session Name</label>
-          <input name="tg_session_name" placeholder="media_hub">
-        </div>
-        <div class="field">
-          <label>Phone Number</label>
-          <input name="tg_phone_number" placeholder="+8613800000000">
-        </div>
-      </div>
-      <div class="field">
-        <label>Monitored Chat IDs</label>
-        <input name="tg_monitored_chats" placeholder="-1001234567890,-1009876543210">
-        <div class="hint">Comma-separated. Leave empty to monitor all chats.</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Infrastructure</h2>
-      <div class="field">
-        <label>Database URL</label>
-        <input name="database_url" placeholder="postgresql+asyncpg://user:pass@host:5432/db">
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>Redis URL</label>
-          <input name="redis_url" placeholder="redis://redis:6379/0">
-        </div>
-        <div class="field">
-          <label>MeTube URL</label>
-          <input name="metube_url" placeholder="http://metube:8081">
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Storage</h2>
-      <div class="row">
-        <div class="field">
-          <label>Storage Root</label>
-          <input name="storage_root" placeholder="/media">
-        </div>
-        <div class="field">
-          <label>Temp Directory</label>
-          <input name="temp_dir" placeholder="/media/temp">
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Workers & Retry</h2>
-      <div class="row">
-        <div class="field">
-          <label>TG Download Workers</label>
-          <input name="tg_download_workers" type="number" min="1" max="20">
-        </div>
-        <div class="field">
-          <label>External Download Workers</label>
-          <input name="external_download_workers" type="number" min="1" max="20">
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>Max Retries</label>
-          <input name="max_retries" type="number" min="0" max="20">
-        </div>
-        <div class="field">
-          <label>Retry Base Delay (sec)</label>
-          <input name="retry_base_delay" type="number" min="5">
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Download</h2>
-      <div class="row">
-        <div class="field">
-          <label>yt-dlp Format</label>
-          <input name="ytdlp_format" placeholder="bestvideo+bestaudio/best">
-        </div>
-        <div class="field">
-          <label>Use aria2c</label>
-          <select name="ytdlp_use_aria2">
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-        </div>
-      </div>
-      <div class="field">
-        <label>Proxy Pool</label>
-        <input name="proxy_pool" placeholder="http://proxy1:7890,socks5://proxy2:1080">
-        <div class="hint">Comma-separated proxy URLs. Leave empty if not needed.</div>
-      </div>
-      <button type="button" class="btn btn-outline" id="btn-proxy-test" style="margin-top:2px">
-        Test Proxies
-      </button>
-      <div id="proxy-results" class="proxy-results"></div>
-    </div>
-
-    <div class="card">
-      <h2>TG Parallel Download</h2>
-      <div class="row">
-        <div class="field">
-          <label>Parallel Connections</label>
-          <input name="tg_parallel_connections" type="number" min="1" max="8">
-          <div class="hint">Per-file concurrent chunk streams (default: 4)</div>
-        </div>
-        <div class="field">
-          <label>Parallel Threshold (MB)</label>
-          <input name="tg_parallel_threshold" type="number" min="1" max="100">
-          <div class="hint">Files below this size use single-stream download</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Notification</h2>
-      <div class="row">
-        <div class="field">
-          <label>Notify on Complete</label>
-          <select name="tg_notify_on_complete">
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-          <div class="hint">Reply in TG chat when download finishes</div>
-        </div>
-        <div class="field">
-          <label>Notify on Fail</label>
-          <select name="tg_notify_on_fail">
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-          <div class="hint">Reply in TG chat when download fails</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="btn-group">
-      <button type="submit" class="btn btn-primary" id="cfg-save">Save Configuration</button>
-      <button type="button" class="btn btn-outline" id="cfg-reload">Reset</button>
-    </div>
-  </form>
-</div>
-
-<!-- ===================== AUTH PANE ===================== -->
-<div id="pane-auth" class="pane">
-  <div id="auth-alert" class="alert"></div>
-
-  <!-- already logged in -->
-  <div id="step-done" class="step">
-    <div class="card">
-      <h2>Account Connected</h2>
-      <div class="user-card" id="user-card">
-        <div class="avatar" id="user-avatar">?</div>
-        <div class="info">
-          <div class="name" id="user-name">--</div>
-          <div class="meta" id="user-meta">--</div>
-        </div>
-      </div>
-      <div class="btn-group">
-        <button class="btn btn-danger" id="btn-logout">Disconnect & Logout</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- step 1: phone -->
-  <div id="step-phone" class="step">
-    <div class="card">
-      <h2>Step 1 &mdash; Enter Phone Number</h2>
-      <p style="color:var(--text2);margin-bottom:16px">
-        Enter the phone number associated with your Telegram account.
-        A verification code will be sent via Telegram or SMS.
-      </p>
-      <div class="field">
-        <label>Phone Number</label>
-        <input id="auth-phone" placeholder="+8613800000000">
-        <div class="hint">Include country code, e.g. +86, +1</div>
-      </div>
-      <div class="btn-group">
-        <button class="btn btn-primary" id="btn-send-code">Send Verification Code</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- step 2: code -->
-  <div id="step-code" class="step">
-    <div class="card">
-      <h2>Step 2 &mdash; Enter Verification Code</h2>
-      <p style="color:var(--text2);margin-bottom:16px">
-        Enter the code you received in Telegram or via SMS.
-      </p>
-      <div class="field">
-        <label>Verification Code</label>
-        <input id="auth-code" placeholder="12345" maxlength="10" style="letter-spacing:6px;font-size:1.3rem;text-align:center">
-      </div>
-      <div class="btn-group">
-        <button class="btn btn-primary" id="btn-verify">Verify Code</button>
-        <button class="btn btn-outline" id="btn-resend">Resend Code</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- step 3: 2FA -->
-  <div id="step-2fa" class="step">
-    <div class="card">
-      <h2>Step 3 &mdash; Two-Factor Authentication</h2>
-      <p style="color:var(--text2);margin-bottom:16px">
-        Your account has 2FA enabled. Enter your cloud password.
-      </p>
-      <div class="field">
-        <label>Cloud Password</label>
-        <input id="auth-password" type="password" placeholder="Enter your 2FA password">
-      </div>
-      <div class="btn-group">
-        <button class="btn btn-primary" id="btn-2fa">Submit Password</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ===================== TASKS PANE ===================== -->
-<div id="pane-tasks" class="pane">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-    <div style="display:flex;gap:8px;align-items:center">
-      <select id="task-filter" class="btn btn-outline" style="padding:7px 12px;font-size:.85rem">
-        <option value="">All Status</option>
-        <option value="pending">Pending</option>
-        <option value="downloading">Downloading</option>
-        <option value="completed">Completed</option>
-        <option value="failed">Failed</option>
-        <option value="retrying">Retrying</option>
-      </select>
-    </div>
-    <button class="btn btn-outline" id="btn-refresh-tasks" style="font-size:.85rem">Refresh</button>
-  </div>
-  <div class="card" style="padding:0;overflow-x:auto">
-    <table class="tbl">
-      <thead>
-        <tr><th>#</th><th>Type</th><th>Source</th><th>Status</th><th>Size</th><th>Time</th><th>Action</th></tr>
-      </thead>
-      <tbody id="task-tbody">
-        <tr><td colspan="7" class="empty">Loading...</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div id="task-stats" style="color:var(--text3);font-size:.8rem;text-align:right;margin-top:6px"></div>
-</div>
-
-</div><!-- /shell -->
-
-<script>
-/* ========== helpers ========== */
-const $ = s => document.querySelector(s);
-const $$ = s => document.querySelectorAll(s);
-const API = '';  // same origin
-
-function alert_(id, cls, msg) {
-  const el = $(id);
-  el.className = 'alert ' + cls;
-  el.textContent = msg;
-}
-function alertHide(id) { $(id).className = 'alert'; $(id).style.display = 'none'; }
-function showAlert(id, cls, msg) { const el = $(id); el.className = 'alert ' + cls; el.textContent = msg; el.style.display = 'block'; }
-
-async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
-  if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(API + path, opts);
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
-  return data;
-}
-
-function fmtBytes(b) {
-  if (!b) return '--';
-  if (b < 1024) return b + ' B';
-  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
-  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
-  return (b / 1073741824).toFixed(2) + ' GB';
-}
-function fmtTime(s) {
-  if (!s) return '--';
-  return new Date(s).toLocaleString('zh-CN', { hour12: false });
-}
-function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s || '--'; }
-
-/* ========== tabs ========== */
-$$('.tab').forEach(t => t.addEventListener('click', () => {
-  $$('.tab').forEach(x => x.classList.remove('active'));
-  $$('.pane').forEach(x => x.classList.remove('active'));
-  t.classList.add('active');
-  $('#' + t.dataset.pane).classList.add('active');
-  if (t.dataset.pane === 'pane-tasks') loadTasks();
-  if (t.dataset.pane === 'pane-auth') checkAuth();
-}));
-
-/* ========== SETTINGS ========== */
-async function loadConfig() {
-  try {
-    const d = await api('GET', '/api/config/');
-    const form = $('#cfg-form');
-    Object.keys(d).forEach(k => {
-      const el = form.elements[k];
-      if (!el) return;
-      if (el.tagName === 'SELECT') el.value = String(d[k]);
-      else el.value = d[k];
-    });
-  } catch (e) { showAlert('#cfg-alert', 'warn', 'Could not load config (server may be starting): ' + e.message); }
-}
-
-$('#cfg-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const btn = $('#cfg-save');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Saving...';
-  try {
-    const fd = new FormData(e.target);
-    const body = {};
-    for (const [k, v] of fd.entries()) {
-      if (['tg_api_id','tg_download_workers','external_download_workers','max_retries','retry_base_delay','tg_parallel_connections','tg_parallel_threshold'].includes(k))
-        body[k] = parseInt(v) || 0;
-      else if (['ytdlp_use_aria2','tg_notify_on_complete','tg_notify_on_fail'].includes(k)) body[k] = v === 'true';
-      else body[k] = v;
-    }
-    await api('PUT', '/api/config/', body);
-    showAlert('#cfg-alert', 'ok', 'Configuration saved successfully. Restart services to apply changes.');
-  } catch (e) { showAlert('#cfg-alert', 'err', 'Save failed: ' + e.message); }
-  btn.disabled = false; btn.textContent = 'Save Configuration';
-});
-
-$('#cfg-reload').addEventListener('click', () => { alertHide('#cfg-alert'); loadConfig(); });
-
-/* ========== PROXY TEST ========== */
-$('#btn-proxy-test').addEventListener('click', async () => {
-  const raw = $('[name="proxy_pool"]').value.trim();
-  if (!raw) { showAlert('#cfg-alert', 'warn', 'Enter at least one proxy URL first.'); return; }
-
-  const proxies = raw.split(',').map(s => s.trim()).filter(Boolean);
-  const container = $('#proxy-results');
-  const btn = $('#btn-proxy-test');
-
-  // Show waiting state for each proxy
-  container.innerHTML = proxies.map(p =>
-    `<div class="proxy-row"><span class="dot wait"></span><span class="url">${p}</span><span class="lat">testing...</span></div>`
-  ).join('');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Testing...';
-
-  try {
-    const results = await api('POST', '/api/config/proxy-test', { proxies });
-    container.innerHTML = results.map(r => {
-      if (r.ok) {
-        return `<div class="proxy-row"><span class="dot ok"></span><span class="url">${r.proxy}</span><span class="lat">${r.latency_ms} ms</span></div>`;
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Telegram Media Hub</title>
+    <style>
+      /* ========== reset & base ========== */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
       }
-      return `<div class="proxy-row"><span class="dot fail"></span><span class="url">${r.proxy}</span><span class="err" title="${r.error || ''}">${r.error || 'failed'}</span><span class="lat">${r.latency_ms != null ? r.latency_ms + ' ms' : '--'}</span></div>`;
-    }).join('');
-  } catch (e) {
-    container.innerHTML = `<div class="proxy-row"><span class="dot fail"></span><span class="url">Error</span><span class="err">${e.message}</span></div>`;
-  }
-  btn.disabled = false; btn.textContent = 'Test Proxies';
-});
+      :root {
+        --bg: #0f1117;
+        --bg2: #181b24;
+        --bg3: #1e222d;
+        --border: #2a2e3b;
+        --border-h: #3a3f50;
+        --text: #e4e6eb;
+        --text2: #9ca0ab;
+        --text3: #6b7080;
+        --accent: #3b82f6;
+        --accent-h: #2563eb;
+        --green: #22c55e;
+        --red: #ef4444;
+        --yellow: #eab308;
+        --radius: 8px;
+      }
+      html {
+        font-size: 14px;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        min-height: 100vh;
+      }
 
-/* ========== AUTH ========== */
-let authPhone = '';
+      /* ========== layout ========== */
+      .shell {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 24px 16px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 28px;
+      }
+      header h1 {
+        font-size: 1.4rem;
+        font-weight: 600;
+      }
+      header .badge {
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: var(--green);
+        color: #000;
+        font-weight: 600;
+      }
+      header .badge.off {
+        background: var(--red);
+      }
 
-function showStep(name) {
-  $$('#pane-auth .step').forEach(s => s.classList.remove('active'));
-  const el = $('#step-' + name);
-  if (el) el.classList.add('active');
-}
+      /* ========== tabs ========== */
+      .tabs {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 24px;
+      }
+      .tab {
+        padding: 10px 20px;
+        cursor: pointer;
+        color: var(--text2);
+        font-weight: 500;
+        border-bottom: 2px solid transparent;
+        transition: 0.15s;
+      }
+      .tab:hover {
+        color: var(--text);
+      }
+      .tab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+      .pane {
+        display: none;
+      }
+      .pane.active {
+        display: block;
+      }
 
-async function checkAuth() {
-  try {
-    const d = await api('GET', '/api/auth/status');
-    if (d.logged_in && d.user) {
-      showLoggedIn(d.user);
-      $('#hdr-badge').textContent = 'Connected';
-      $('#hdr-badge').className = 'badge';
-    } else if (d.needs_2fa) {
-      showStep('2fa');
-    } else {
-      showStep('phone');
-      $('#hdr-badge').textContent = 'Not Connected';
-      $('#hdr-badge').className = 'badge off';
-    }
-  } catch (e) {
-    showStep('phone');
-    $('#hdr-badge').textContent = 'Offline';
-    $('#hdr-badge').className = 'badge off';
-  }
-}
+      /* ========== card / form ========== */
+      .card {
+        background: var(--bg2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .card h2 {
+        font-size: 1.05rem;
+        margin-bottom: 16px;
+        font-weight: 600;
+      }
+      .card h3 {
+        font-size: 0.92rem;
+        margin: 18px 0 10px;
+        color: var(--text2);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .field {
+        margin-bottom: 14px;
+      }
+      .field label {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--text2);
+        font-size: 0.85rem;
+      }
+      .field input,
+      .field textarea,
+      .field select {
+        width: 100%;
+        padding: 9px 12px;
+        background: var(--bg3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text);
+        font-size: 0.9rem;
+        outline: none;
+        transition: 0.15s;
+      }
+      .field input:focus,
+      .field textarea:focus {
+        border-color: var(--accent);
+      }
+      .field .hint {
+        font-size: 0.75rem;
+        color: var(--text3);
+        margin-top: 3px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
 
-function showLoggedIn(u) {
-  showStep('done');
-  $('#user-avatar').textContent = (u.first_name || '?')[0].toUpperCase();
-  $('#user-name').textContent = [u.first_name, u.last_name].filter(Boolean).join(' ');
-  $('#user-meta').textContent = [u.username ? '@' + u.username : '', u.phone ? '+' + u.phone : ''].filter(Boolean).join(' | ');
-}
+      /* buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 9px 22px;
+        border: none;
+        border-radius: var(--radius);
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: 0.15s;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: var(--accent-h);
+      }
+      .btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .btn-outline {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text2);
+      }
+      .btn-outline:hover {
+        border-color: var(--text2);
+        color: var(--text);
+      }
+      .btn-danger {
+        background: var(--red);
+        color: #fff;
+      }
+      .btn-danger:hover {
+        opacity: 0.85;
+      }
+      .btn-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 18px;
+      }
 
-$('#btn-send-code').addEventListener('click', async () => {
-  const phone = $('#auth-phone').value.trim();
-  if (!phone) return showAlert('#auth-alert', 'err', 'Please enter your phone number');
-  const btn = $('#btn-send-code');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Sending...';
-  try {
-    await api('POST', '/api/auth/send-code', { phone });
-    authPhone = phone;
-    showAlert('#auth-alert', 'ok', 'Verification code sent! Check your Telegram or SMS.');
-    showStep('code');
-    $('#auth-code').focus();
-  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
-  btn.disabled = false; btn.textContent = 'Send Verification Code';
-});
+      /* alerts */
+      .alert {
+        padding: 12px 16px;
+        border-radius: var(--radius);
+        font-size: 0.88rem;
+        margin-bottom: 16px;
+        display: none;
+      }
+      .alert.ok {
+        display: block;
+        background: #22c55e20;
+        border: 1px solid #22c55e40;
+        color: var(--green);
+      }
+      .alert.err {
+        display: block;
+        background: #ef444420;
+        border: 1px solid #ef444440;
+        color: var(--red);
+      }
+      .alert.info {
+        display: block;
+        background: #3b82f620;
+        border: 1px solid #3b82f640;
+        color: var(--accent);
+      }
+      .alert.warn {
+        display: block;
+        background: #eab30820;
+        border: 1px solid #eab30840;
+        color: var(--yellow);
+      }
 
-$('#btn-verify').addEventListener('click', async () => {
-  const code = $('#auth-code').value.trim();
-  if (!code) return showAlert('#auth-alert', 'err', 'Please enter the verification code');
-  const btn = $('#btn-verify');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Verifying...';
-  try {
-    const d = await api('POST', '/api/auth/sign-in', { phone: authPhone, code });
-    if (d.needs_2fa) {
-      showAlert('#auth-alert', 'info', 'Your account has 2FA. Please enter your password.');
-      showStep('2fa');
-      $('#auth-password').focus();
-    } else {
-      showAlert('#auth-alert', 'ok', 'Login successful!');
-      showLoggedIn(d.user);
-      $('#hdr-badge').textContent = 'Connected';
-      $('#hdr-badge').className = 'badge';
-    }
-  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
-  btn.disabled = false; btn.textContent = 'Verify Code';
-});
+      /* auth steps */
+      .step {
+        display: none;
+      }
+      .step.active {
+        display: block;
+      }
+      .user-card {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px;
+        background: var(--bg3);
+        border-radius: var(--radius);
+      }
+      .user-card .avatar {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.3rem;
+        font-weight: 600;
+        color: #fff;
+      }
+      .user-card .info {
+        flex: 1;
+      }
+      .user-card .name {
+        font-weight: 600;
+      }
+      .user-card .meta {
+        color: var(--text2);
+        font-size: 0.85rem;
+      }
 
-$('#btn-resend').addEventListener('click', async () => {
-  try {
-    await api('POST', '/api/auth/send-code', { phone: authPhone });
-    showAlert('#auth-alert', 'ok', 'Code resent!');
-  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
-});
+      /* task table */
+      .tbl {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+      }
+      .tbl th,
+      .tbl td {
+        padding: 10px 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+      }
+      .tbl th {
+        color: var(--text2);
+        font-weight: 500;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      .tbl tr:hover td {
+        background: var(--bg3);
+      }
+      .status {
+        padding: 2px 10px;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+      .status.completed {
+        background: #22c55e20;
+        color: var(--green);
+      }
+      .status.downloading {
+        background: #3b82f620;
+        color: var(--accent);
+      }
+      .status.pending {
+        background: #eab30820;
+        color: var(--yellow);
+      }
+      .status.failed,
+      .status.cancelled {
+        background: #ef444420;
+        color: var(--red);
+      }
+      .status.retrying {
+        background: #f9731620;
+        color: #f97316;
+      }
+      .empty {
+        text-align: center;
+        color: var(--text3);
+        padding: 40px 0;
+      }
 
-$('#btn-2fa').addEventListener('click', async () => {
-  const pw = $('#auth-password').value;
-  if (!pw) return showAlert('#auth-alert', 'err', 'Please enter your password');
-  const btn = $('#btn-2fa');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Verifying...';
-  try {
-    const d = await api('POST', '/api/auth/sign-in-2fa', { password: pw });
-    showAlert('#auth-alert', 'ok', 'Login successful!');
-    showLoggedIn(d.user);
-    $('#hdr-badge').textContent = 'Connected';
-    $('#hdr-badge').className = 'badge';
-  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
-  btn.disabled = false; btn.textContent = 'Submit Password';
-});
+      /* proxy test results */
+      .proxy-results {
+        margin-top: 10px;
+      }
+      .proxy-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: var(--radius);
+        margin-bottom: 4px;
+        font-size: 0.85rem;
+        background: var(--bg3);
+      }
+      .proxy-row .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .proxy-row .dot.ok {
+        background: var(--green);
+      }
+      .proxy-row .dot.fail {
+        background: var(--red);
+      }
+      .proxy-row .dot.wait {
+        background: var(--text3);
+        animation: pulse 1s infinite;
+      }
+      .proxy-row .url {
+        flex: 1;
+        color: var(--text);
+        font-family: monospace;
+        font-size: 0.82rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .proxy-row .lat {
+        color: var(--text2);
+        min-width: 70px;
+        text-align: right;
+      }
+      .proxy-row .err {
+        color: var(--red);
+        font-size: 0.78rem;
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
 
-$('#btn-logout').addEventListener('click', async () => {
-  if (!confirm('Are you sure you want to disconnect this Telegram account?')) return;
-  try {
-    await api('POST', '/api/auth/logout');
-    showAlert('#auth-alert', 'ok', 'Logged out.');
-    showStep('phone');
-    $('#hdr-badge').textContent = 'Not Connected';
-    $('#hdr-badge').className = 'badge off';
-  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
-});
+      /* spinner */
+      .spin {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #fff4;
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
 
-/* ========== TASKS ========== */
-async function loadTasks() {
-  const filter = $('#task-filter').value;
-  const qs = filter ? '?status=' + filter : '';
-  try {
-    const d = await api('GET', '/api/tasks/' + qs);
-    const tbody = $('#task-tbody');
-    if (!d.tasks || d.tasks.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">No tasks yet</td></tr>';
-      $('#task-stats').textContent = '';
-      return;
-    }
-    tbody.innerHTML = d.tasks.map(t => `
+      /* API key overlay */
+      #key-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: #0009;
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+      }
+      #key-box {
+        background: var(--bg2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 28px 32px;
+        width: 360px;
+        max-width: 95vw;
+      }
+      #key-box h2 {
+        margin-bottom: 8px;
+        font-size: 1rem;
+      }
+      #key-box p {
+        color: var(--text2);
+        font-size: 0.85rem;
+        margin-bottom: 16px;
+      }
+      #key-input {
+        width: 100%;
+        padding: 9px 12px;
+        background: var(--bg3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text);
+        font-size: 0.9rem;
+        margin-bottom: 12px;
+        outline: none;
+      }
+
+      /* ===== Dashboard ===== */
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+      }
+      .stat-card {
+        background: var(--bg3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        text-align: center;
+      }
+      .stat-card .stat-num {
+        font-size: 1.55rem;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+      .stat-card .stat-label {
+        font-size: 0.75rem;
+        color: var(--text2);
+        margin-top: 3px;
+      }
+      .health-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.88rem;
+      }
+      .health-row:last-child {
+        border-bottom: none;
+      }
+      .health-row .h-label {
+        flex: 1;
+        color: var(--text2);
+      }
+      .health-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .health-dot.ok {
+        background: var(--green);
+      }
+      .health-dot.err {
+        background: var(--red);
+      }
+      .health-dot.warn {
+        background: var(--yellow);
+      }
+      .setup-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .setup-step {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        padding: 14px;
+        background: var(--bg3);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+      }
+      .setup-step.done {
+        opacity: 0.5;
+      }
+      .step-num {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.85rem;
+        flex-shrink: 0;
+      }
+      .setup-step.done .step-num {
+        background: var(--green);
+      }
+      .step-title {
+        font-weight: 600;
+        margin-bottom: 3px;
+      }
+      .step-desc {
+        font-size: 0.82rem;
+        color: var(--text2);
+      }
+      .dash-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+
+      /* responsive */
+      @media (max-width: 600px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+        .dash-row {
+          grid-template-columns: 1fr;
+        }
+        .tabs {
+          overflow-x: auto;
+        }
+        .tab {
+          white-space: nowrap;
+          padding: 10px 14px;
+          font-size: 0.88rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- API Key overlay -->
+    <div id="key-overlay">
+      <div id="key-box">
+        <h2>需要 API 密钥</h2>
+        <p id="key-reason">请输入 API 密钥以访问管理界面。</p>
+        <input
+          id="key-input"
+          type="password"
+          placeholder="在此粘贴 API 密钥..."
+          aria-label="API Key"
+          autocomplete="off"
+        />
+        <button
+          class="btn btn-primary"
+          style="width: 100%"
+          onclick="applyKey()"
+        >
+          确认
+        </button>
+      </div>
+    </div>
+
+    <div class="shell">
+      <!-- header -->
+      <header>
+        <h1>Telegram Media Hub</h1>
+        <span class="badge" id="hdr-badge">--</span>
+      </header>
+
+      <!-- tabs -->
+      <div class="tabs">
+        <div class="tab active" data-pane="pane-dashboard">概览</div>
+        <div class="tab" data-pane="pane-settings">设置</div>
+        <div class="tab" data-pane="pane-auth">TG 登录</div>
+        <div class="tab" data-pane="pane-proxies">代理</div>
+        <div class="tab" data-pane="pane-tasks">任务</div>
+      </div>
+
+      <!-- ===================== DASHBOARD PANE ===================== -->
+      <div id="pane-dashboard" class="pane active">
+        <!-- Setup guide: shown only when config or TG login is incomplete -->
+        <div id="dash-setup" class="card" style="display: none">
+          <h2>配置向导</h2>
+          <div class="setup-steps" id="setup-steps"></div>
+        </div>
+
+        <!-- Health cards row -->
+        <div class="dash-row">
+          <div class="card" style="margin-bottom: 0">
+            <h2>配置状态</h2>
+            <div id="dash-config">
+              <span style="color: var(--text3); font-size: 0.85rem"
+                >加载中...</span
+              >
+            </div>
+          </div>
+          <div class="card" style="margin-bottom: 0">
+            <h2>TG 机器人</h2>
+            <div id="dash-tg">
+              <span style="color: var(--text3); font-size: 0.85rem"
+                >加载中...</span
+              >
+            </div>
+          </div>
+          <div class="card" style="margin-bottom: 0">
+            <h2>队列</h2>
+            <div id="dash-queues">
+              <span style="color: var(--text3); font-size: 0.85rem"
+                >加载中...</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Task statistics -->
+        <div class="card">
+          <h2>任务统计</h2>
+          <div class="stat-grid" id="dash-stats">
+            <div class="stat-card">
+              <div class="stat-num" style="color: var(--text3)">--</div>
+              <div class="stat-label">加载中...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Workers -->
+        <div class="card">
+          <h2>工作进程</h2>
+          <div id="dash-workers">
+            <span style="color: var(--text3); font-size: 0.85rem"
+              >加载中...</span
+            >
+          </div>
+        </div>
+
+        <div style="text-align: right; margin-top: -10px; margin-bottom: 8px">
+          <button
+            class="btn btn-outline"
+            style="font-size: 0.8rem; padding: 5px 14px"
+            onclick="loadDashboard()"
+          >
+            ↻ 刷新
+          </button>
+          <span
+            id="dash-last-refresh"
+            style="color: var(--text3); font-size: 0.78rem; margin-left: 10px"
+          ></span>
+        </div>
+      </div>
+
+      <!-- ===================== SETTINGS PANE ===================== -->
+      <div id="pane-settings" class="pane">
+        <div id="cfg-alert" class="alert"></div>
+        <form id="cfg-form" autocomplete="off">
+          <div class="card">
+            <h2>Telegram</h2>
+            <div class="row">
+              <div class="field">
+                <label for="tg_api_id">API ID</label>
+                <input
+                  id="tg_api_id"
+                  name="tg_api_id"
+                  type="number"
+                  placeholder="123456"
+                />
+                <div class="hint">my.telegram.org → API 开发工具</div>
+              </div>
+              <div class="field">
+                <label for="tg_api_hash">API Hash</label>
+                <input
+                  id="tg_api_hash"
+                  name="tg_api_hash"
+                  placeholder="abcdef1234567890"
+                />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="tg_session_name">会话名称</label>
+                <input
+                  id="tg_session_name"
+                  name="tg_session_name"
+                  placeholder="media_hub"
+                />
+              </div>
+              <div class="field">
+                <label for="tg_phone_number">手机号码</label>
+                <input
+                  id="tg_phone_number"
+                  name="tg_phone_number"
+                  placeholder="+8613800000000"
+                />
+              </div>
+            </div>
+            <div class="field">
+              <label for="tg_monitored_chats">监控的聊天 ID</label>
+              <input
+                id="tg_monitored_chats"
+                name="tg_monitored_chats"
+                placeholder="-1001234567890,-1009876543210"
+              />
+              <div class="hint">逗号分隔，留空则监控所有会话。</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>基础设施</h2>
+            <div class="field">
+              <label for="database_url">数据库 URL</label>
+              <input
+                id="database_url"
+                name="database_url"
+                placeholder="postgresql+asyncpg://user:pass@host:5432/db"
+              />
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="redis_url">Redis URL</label>
+                <input
+                  id="redis_url"
+                  name="redis_url"
+                  placeholder="redis://redis:6379/0"
+                />
+              </div>
+              <div class="field">
+                <label for="metube_url">MeTube URL</label>
+                <input
+                  id="metube_url"
+                  name="metube_url"
+                  placeholder="http://metube:8081"
+                />
+              </div>
+            </div>
+            <div class="field">
+              <label for="api_secret_key">API 密钥</label>
+              <input
+                id="api_secret_key"
+                name="api_secret_key"
+                type="password"
+                placeholder="留空则不启用身份验证"
+                autocomplete="new-password"
+              />
+              <div class="hint">
+                保护 Web 界面，所有 API 请求需携带
+                <code>X-API-Key</code>
+                请求头。留空则不启用认证（首次配置时适用）。
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>存储</h2>
+            <div class="row">
+              <div class="field">
+                <label for="storage_root">存储根目录</label>
+                <input
+                  id="storage_root"
+                  name="storage_root"
+                  placeholder="/media"
+                />
+              </div>
+              <div class="field">
+                <label for="temp_dir">临时目录</label>
+                <input
+                  id="temp_dir"
+                  name="temp_dir"
+                  placeholder="/media/temp"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Worker 与重试</h2>
+            <div class="row">
+              <div class="field">
+                <label for="tg_download_workers">TG 下载 Worker 数</label>
+                <input
+                  id="tg_download_workers"
+                  name="tg_download_workers"
+                  type="number"
+                  min="1"
+                  max="20"
+                />
+              </div>
+              <div class="field">
+                <label for="external_download_workers"
+                  >外部下载 Worker 数</label
+                >
+                <input
+                  id="external_download_workers"
+                  name="external_download_workers"
+                  type="number"
+                  min="1"
+                  max="20"
+                />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="max_retries">最大重试次数</label>
+                <input
+                  id="max_retries"
+                  name="max_retries"
+                  type="number"
+                  min="0"
+                  max="20"
+                />
+              </div>
+              <div class="field">
+                <label for="retry_base_delay">重试基础延迟（秒）</label>
+                <input
+                  id="retry_base_delay"
+                  name="retry_base_delay"
+                  type="number"
+                  min="5"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>下载</h2>
+            <div class="field">
+              <label for="proxy_pool">代理池</label>
+              <input
+                id="proxy_pool"
+                name="proxy_pool"
+                placeholder="http://proxy1:7890,socks5://proxy2:1080"
+              />
+              <div class="hint">
+                逗号分隔的代理地址列表，保存后可在《<strong>代理</strong>》标签页管理单个代理。
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="proxy_fail_threshold">失败阈値</label>
+                <input
+                  id="proxy_fail_threshold"
+                  name="proxy_fail_threshold"
+                  type="number"
+                  min="1"
+                  max="20"
+                />
+                <div class="hint">连续失败多少次后将代理标记为失效</div>
+              </div>
+              <div class="field">
+                <label for="proxy_check_interval">健康检查间隔（秒）</label>
+                <input
+                  id="proxy_check_interval"
+                  name="proxy_check_interval"
+                  type="number"
+                  min="0"
+                />
+                <div class="hint">0 = 关闭自动健康检查</div>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="btn btn-outline"
+              id="btn-proxy-test"
+              style="margin-top: 2px"
+            >
+              测试代理
+            </button>
+            <div id="proxy-results" class="proxy-results"></div>
+          </div>
+
+          <div class="card">
+            <h2>TG 并行下载</h2>
+            <div class="row">
+              <div class="field">
+                <label for="tg_parallel_connections">并发连接数</label>
+                <input
+                  id="tg_parallel_connections"
+                  name="tg_parallel_connections"
+                  type="number"
+                  min="1"
+                  max="8"
+                />
+                <div class="hint">每文件并发分块流数（默认 4）</div>
+              </div>
+              <div class="field">
+                <label for="tg_parallel_threshold">并行阈値（MB）</label>
+                <input
+                  id="tg_parallel_threshold"
+                  name="tg_parallel_threshold"
+                  type="number"
+                  min="1"
+                  max="100"
+                />
+                <div class="hint">小于此大小的文件使用单流下载</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>通知</h2>
+            <div class="row">
+              <div class="field">
+                <label for="tg_notify_on_complete">完成时通知</label>
+                <select id="tg_notify_on_complete" name="tg_notify_on_complete">
+                  <option value="true">是</option>
+                  <option value="false">否</option>
+                </select>
+                <div class="hint">下载完成后在 TG 聊天中回复</div>
+              </div>
+              <div class="field">
+                <label for="tg_notify_on_fail">失败时通知</label>
+                <select id="tg_notify_on_fail" name="tg_notify_on_fail">
+                  <option value="true">是</option>
+                  <option value="false">否</option>
+                </select>
+                <div class="hint">下载失败后在 TG 聊天中回复</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="btn-group">
+            <button type="submit" class="btn btn-primary" id="cfg-save">
+              保存配置
+            </button>
+            <button type="button" class="btn btn-outline" id="cfg-reload">
+              重置
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ===================== AUTH PANE ===================== -->
+      <div id="pane-auth" class="pane">
+        <div id="auth-alert" class="alert"></div>
+
+        <!-- already logged in -->
+        <div id="step-done" class="step">
+          <div class="card">
+            <h2>账号已连接</h2>
+            <div class="user-card" id="user-card">
+              <div class="avatar" id="user-avatar">?</div>
+              <div class="info">
+                <div class="name" id="user-name">--</div>
+                <div class="meta" id="user-meta">--</div>
+              </div>
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-danger" id="btn-logout">
+                断开连接并退出
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 1: phone -->
+        <div id="step-phone" class="step">
+          <div class="card">
+            <h2>第 1 步 — 输入手机号码</h2>
+            <p style="color: var(--text2); margin-bottom: 16px">
+              输入绑定 Telegram 账号的手机号码，验证码将通过 Telegram
+              或短信发送。
+            </p>
+            <div class="field">
+              <label for="auth-phone">手机号码</label>
+              <input id="auth-phone" placeholder="+8613800000000" />
+              <div class="hint">请包含国家代码，如 +86、+1</div>
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="btn-send-code">
+                发送验证码
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 2: code -->
+        <div id="step-code" class="step">
+          <div class="card">
+            <h2>第 2 步 — 输入验证码</h2>
+            <p style="color: var(--text2); margin-bottom: 16px">
+              输入您在 Telegram 或短信中收到的验证码。
+            </p>
+            <div class="field">
+              <label for="auth-code">验证码</label>
+              <input
+                id="auth-code"
+                placeholder="12345"
+                maxlength="10"
+                style="
+                  letter-spacing: 6px;
+                  font-size: 1.3rem;
+                  text-align: center;
+                "
+              />
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="btn-verify">验证</button>
+              <button class="btn btn-outline" id="btn-resend">重新发送</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 3: 2FA -->
+        <div id="step-2fa" class="step">
+          <div class="card">
+            <h2>第 3 步 — 两步验证</h2>
+            <p style="color: var(--text2); margin-bottom: 16px">
+              您的账号已开启两步验证，请输入云端密码。
+            </p>
+            <div class="field">
+              <label for="auth-password">云端密码</label>
+              <input
+                id="auth-password"
+                type="password"
+                placeholder="输入两步验证密码"
+              />
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="btn-2fa">提交密码</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== PROXIES PANE ===================== -->
+      <div id="pane-proxies" class="pane">
+        <div id="proxy-alert" class="alert"></div>
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+          "
+        >
+          <span
+            style="color: var(--text2); font-size: 0.85rem"
+            id="proxy-summary"
+          ></span>
+          <div style="display: flex; gap: 8px">
+            <button class="btn btn-outline" onclick="syncProxies()">
+              从设置同步
+            </button>
+            <button
+              class="btn btn-primary"
+              id="btn-check-all"
+              onclick="checkAllProxies()"
+            >
+              运行健康检查
+            </button>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom: 16px">
+          <h2>添加代理</h2>
+          <div style="display: flex; gap: 8px">
+            <input
+              id="new-proxy-url"
+              style="
+                flex: 1;
+                padding: 9px 12px;
+                background: var(--bg3);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                color: var(--text);
+                font-size: 0.9rem;
+                outline: none;
+              "
+              placeholder="http://host:7890 或 socks5://host:1080"
+              aria-label="Proxy URL"
+            />
+            <button class="btn btn-primary" onclick="addProxy()">添加</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>代理状态</h2>
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>地址</th>
+                <th>状态</th>
+                <th>延迟</th>
+                <th>失败次数</th>
+                <th>上次检查</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="proxy-tbody">
+              <tr>
+                <td colspan="6" class="empty">加载中...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===================== TASKS PANE ===================== -->
+      <div id="pane-tasks" class="pane">
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+          "
+        >
+          <div style="display: flex; gap: 8px; align-items: center">
+            <select
+              id="task-filter"
+              class="btn btn-outline"
+              style="padding: 7px 12px; font-size: 0.85rem"
+            >
+              <option value="">全部状态</option>
+              <option value="pending">待处理</option>
+              <option value="downloading">下载中</option>
+              <option value="completed">已完成</option>
+              <option value="failed">失败</option>
+              <option value="retrying">重试中</option>
+            </select>
+          </div>
+          <button
+            class="btn btn-outline"
+            id="btn-refresh-tasks"
+            style="font-size: 0.85rem"
+          >
+            刷新
+          </button>
+        </div>
+        <div class="card" style="padding: 0; overflow-x: auto">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>类型</th>
+                <th>来源</th>
+                <th>状态</th>
+                <th>大小</th>
+                <th>时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="task-tbody">
+              <tr>
+                <td colspan="7" class="empty">加载中...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div
+          id="task-stats"
+          style="
+            color: var(--text3);
+            font-size: 0.8rem;
+            text-align: right;
+            margin-top: 6px;
+          "
+        ></div>
+      </div>
+    </div>
+    <!-- /shell -->
+
+    <script>
+      /* ========== helpers ========== */
+      const $ = (s) => document.querySelector(s);
+      const $$ = (s) => document.querySelectorAll(s);
+      const API = ""; // same origin
+
+      /* -------- API Key (stored in sessionStorage) -------- */
+      function getApiKey() {
+        return sessionStorage.getItem("apiKey") || "";
+      }
+      function setApiKey(k) {
+        sessionStorage.setItem("apiKey", k);
+      }
+
+      /* Show the API key prompt overlay when a 401 is received */
+      function showKeyPrompt(reason) {
+        $("#key-reason").textContent =
+          reason || "请输入 API 密钥以访问管理界面。";
+        $("#key-overlay").style.display = "flex";
+        $("#key-input").focus();
+      }
+      function hideKeyPrompt() {
+        $("#key-overlay").style.display = "none";
+      }
+
+      function alert_(id, cls, msg) {
+        const el = $(id);
+        el.className = "alert " + cls;
+        el.textContent = msg;
+      }
+      function alertHide(id) {
+        $(id).className = "alert";
+        $(id).style.display = "none";
+      }
+      function showAlert(id, cls, msg) {
+        const el = $(id);
+        el.className = "alert " + cls;
+        el.textContent = msg;
+        el.style.display = "block";
+      }
+
+      async function api(method, path, body) {
+        const opts = {
+          method,
+          headers: { "Content-Type": "application/json" },
+        };
+        const key = getApiKey();
+        if (key) opts.headers["X-API-Key"] = key;
+        if (body) opts.body = JSON.stringify(body);
+        const r = await fetch(API + path, opts);
+        if (r.status === 401) {
+          showKeyPrompt("API 密钥不正确或未设置，请输入在设置中配置的密钥。");
+          throw new Error("Unauthorized");
+        }
+        // 204 No Content – no body to parse
+        if (r.status === 204) return null;
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+        return data;
+      }
+
+      function fmtBytes(b) {
+        if (!b) return "--";
+        if (b < 1024) return b + " B";
+        if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+        if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
+        return (b / 1073741824).toFixed(2) + " GB";
+      }
+      function fmtTime(s) {
+        if (!s) return "--";
+        return new Date(s).toLocaleString("zh-CN", { hour12: false });
+      }
+      function truncate(s, n) {
+        return s && s.length > n ? s.slice(0, n) + "..." : s || "--";
+      }
+
+      /* ========== tabs ========== */
+      function switchTab(paneId) {
+        $$(".tab").forEach((x) => x.classList.remove("active"));
+        $$(".pane").forEach((x) => x.classList.remove("active"));
+        const tab = $(`[data-pane="${paneId}"]`);
+        if (tab) tab.classList.add("active");
+        const pane = $(`#${paneId}`);
+        if (pane) pane.classList.add("active");
+        if (paneId === "pane-dashboard") loadDashboard();
+        if (paneId === "pane-tasks") loadTasks();
+        if (paneId === "pane-auth") checkAuth();
+        if (paneId === "pane-proxies") loadProxies();
+      }
+
+      $$(".tab").forEach((t) =>
+        t.addEventListener("click", () => switchTab(t.dataset.pane)),
+      );
+
+      /* ========== DASHBOARD ========== */
+      let _dashAutoRefresh = null;
+
+      async function loadDashboard() {
+        try {
+          const [status, stats] = await Promise.all([
+            api("GET", "/api/status"),
+            api("GET", "/api/tasks/stats/summary"),
+          ]);
+          renderDashboardHealth(status);
+          renderDashboardStats(stats);
+        } catch (e) {
+          if (e.message !== "Unauthorized")
+            console.warn("Dashboard error:", e.message);
+        }
+        $("#dash-last-refresh").textContent =
+          "已刷新 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      }
+
+      function renderDashboardHealth(s) {
+        /* Config card */
+        const cfgEl = $("#dash-config");
+        if (s.config.valid) {
+          cfgEl.innerHTML = `<div class="health-row"><span class="health-dot ok"></span><span class="h-label">凭证已配置</span></div>`;
+        } else {
+          const missing = s.config.missing
+            .map((m) => `<code>${m.label}</code>`)
+            .join(", ");
+          cfgEl.innerHTML = `
+            <div class="health-row"><span class="health-dot err"></span><span class="h-label">缺少：${missing}</span></div>
+            <button class="btn btn-primary" style="margin-top:10px;font-size:.82rem;padding:6px 14px" onclick="switchTab('pane-settings')">打开设置 →</button>`;
+        }
+
+        /* TG Bot card */
+        const tgEl = $("#dash-tg");
+        if (s.tg_ready) {
+          tgEl.innerHTML = `<div class="health-row"><span class="health-dot ok"></span><span class="h-label">会话有效，机器人监听中</span></div>`;
+        } else if (s.config.valid && !s.tg_session_exists) {
+          tgEl.innerHTML = `
+            <div class="health-row"><span class="health-dot warn"></span><span class="h-label">未登录</span></div>
+            <button class="btn btn-primary" style="margin-top:10px;font-size:.82rem;padding:6px 14px" onclick="switchTab('pane-auth')">前往 TG 登录 →</button>`;
+        } else {
+          tgEl.innerHTML = `<div class="health-row"><span class="health-dot err"></span><span class="h-label">未就绪，请先配置凭证</span></div>`;
+        }
+
+        /* Queues card */
+        const qEl = $("#dash-queues");
+        if (s.queues.ok) {
+          qEl.innerHTML = `
+            <div class="health-row"><span class="h-label">TG 下载</span><strong>${s.queues.tg_pending}</strong></div>
+            <div class="health-row"><span class="h-label">外部下载</span><strong>${s.queues.external_pending}</strong></div>
+            <div class="health-row"><span class="h-label">重试队列</span><strong>${s.queues.retry_pending}</strong></div>`;
+        } else {
+          qEl.innerHTML = `<div class="health-row"><span class="health-dot err"></span><span class="h-label">Redis 不可用</span></div>`;
+        }
+
+        /* Workers */
+        const wEl = $("#dash-workers");
+        if (!s.workers || s.workers.length === 0) {
+          wEl.innerHTML = `<span style="color:var(--text3);font-size:.85rem">未检测到活跃 Worker，请确认 <code>tg-worker</code> 和 <code>external-worker</code> 容器正在运行。</span>`;
+        } else {
+          wEl.innerHTML = s.workers
+            .map(
+              (w) => `
+            <div class="health-row">
+              <span class="health-dot ${w.state === "idle" || w.state === "busy" ? "ok" : "warn"}"></span>
+              <span class="h-label" style="font-family:monospace;font-size:.82rem">${w.name}</span>
+              <span style="color:var(--text3);font-size:.78rem">${w.queues.join(", ")}</span>
+              <strong style="font-size:.82rem;min-width:48px;text-align:right">${w.state}</strong>
+            </div>`,
+            )
+            .join("");
+        }
+
+        /* Setup guide (only when incomplete) */
+        const guideEl = $("#dash-setup");
+        if (!s.config.valid || !s.tg_session_exists) {
+          guideEl.style.display = "block";
+          const s1done = s.config.valid;
+          const s2done = s.tg_session_exists;
+          $("#setup-steps").innerHTML = `
+            <div class="setup-step ${s1done ? "done" : ""}">
+              <div class="step-num">${s1done ? "✓" : "1"}</div>
+              <div>
+                <div class="step-title">配置 Telegram 凭证</div>
+                <div class="step-desc">在
+                  <a href="#" onclick="switchTab('pane-settings');return false" style="color:var(--accent)">设置</a>
+                  中填写 <strong>API ID</strong> 和 <strong>API Hash</strong>，请前往 <a href="https://my.telegram.org" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">my.telegram.org</a> 获取。
+                </div>
+              </div>
+            </div>
+            <div class="setup-step ${s2done ? "done" : ""}">
+              <div class="step-num">${s2done ? "✓" : "2"}</div>
+              <div>
+                <div class="step-title">登录 Telegram 账号</div>
+                <div class="step-desc">前往
+                  <a href="#" onclick="switchTab('pane-auth');return false" style="color:var(--accent)">TG 登录</a>
+                  页面输入手机号和验证码，会话将永久保存。
+                </div>
+              </div>
+            </div>
+            <div class="setup-step">
+              <div class="step-num">3</div>
+              <div>
+                <div class="step-title">系统运行中</div>
+                <div class="step-desc">认证完成后机器人监听器将自动启动。
+                  向被监控的聊天发送 Telegram 媒体或支持的链接（YouTube、TikTok、Bilibili 等）即可触发下载。
+                  下载失败将通过 Telegram 回复通知。
+                </div>
+              </div>
+            </div>`;
+        } else {
+          guideEl.style.display = "none";
+        }
+      }
+
+      function renderDashboardStats(stats) {
+        const counts = stats.task_counts || {};
+        const COLORS = {
+          pending: "var(--yellow)",
+          downloading: "var(--accent)",
+          completed: "var(--green)",
+          failed: "var(--red)",
+          retrying: "#f97316",
+          cancelled: "var(--text3)",
+        };
+        const total = Object.values(counts).reduce((a, b) => a + b, 0);
+        let html = `<div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">总计</div></div>`;
+        for (const [k, v] of Object.entries(counts)) {
+          html += `<div class="stat-card">
+            <div class="stat-num" style="color:${COLORS[k] || "var(--text)"}">${v}</div>
+            <div class="stat-label">${k.charAt(0).toUpperCase() + k.slice(1)}</div>
+          </div>`;
+        }
+        if (stats.total_downloaded_gb != null) {
+          html += `<div class="stat-card">
+            <div class="stat-num" style="color:var(--accent)">${stats.total_downloaded_gb}</div>
+            <div class="stat-label">GB 已下载</div>
+          </div>`;
+        }
+        $("#dash-stats").innerHTML = html;
+      }
+
+      /* ========== SETTINGS ========== */
+      async function loadConfig() {
+        try {
+          const d = await api("GET", "/api/config/");
+          const form = $("#cfg-form");
+          Object.keys(d).forEach((k) => {
+            const el = form.elements[k];
+            if (!el) return;
+            if (el.tagName === "SELECT") el.value = String(d[k]);
+            else el.value = d[k];
+          });
+        } catch (e) {
+          showAlert(
+            "#cfg-alert",
+            "warn",
+            "无法加载配置（服务器可能正在启动）：" + e.message,
+          );
+        }
+      }
+
+      $("#cfg-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = $("#cfg-save");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin"></span> 保存中...';
+        try {
+          const fd = new FormData(e.target);
+          const body = {};
+          for (const [k, v] of fd.entries()) {
+            if (
+              [
+                "tg_api_id",
+                "tg_download_workers",
+                "external_download_workers",
+                "max_retries",
+                "retry_base_delay",
+                "tg_parallel_connections",
+                "tg_parallel_threshold",
+                "proxy_fail_threshold",
+                "proxy_check_interval",
+              ].includes(k)
+            )
+              body[k] = parseInt(v) || 0;
+            else if (["tg_notify_on_complete", "tg_notify_on_fail"].includes(k))
+              body[k] = v === "true";
+            else body[k] = v;
+          }
+          await api("PUT", "/api/config/", body);
+          showAlert("#cfg-alert", "ok", "配置已保存，重启服务后生效。");
+        } catch (e) {
+          showAlert("#cfg-alert", "err", "保存失败：" + e.message);
+        }
+        btn.disabled = false;
+        btn.textContent = "保存配置";
+      });
+
+      $("#cfg-reload").addEventListener("click", () => {
+        alertHide("#cfg-alert");
+        loadConfig();
+      });
+
+      /* ========== PROXY TEST ========== */
+      $("#btn-proxy-test").addEventListener("click", async () => {
+        const raw = $('[name="proxy_pool"]').value.trim();
+        if (!raw) {
+          showAlert("#cfg-alert", "warn", "请先在上方输入至少一个代理地址。");
+          return;
+        }
+
+        const proxies = raw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const container = $("#proxy-results");
+        const btn = $("#btn-proxy-test");
+
+        // Show waiting state for each proxy
+        container.innerHTML = proxies
+          .map(
+            (p) =>
+              `<div class="proxy-row"><span class="dot wait"></span><span class="url">${p}</span><span class="lat">测试中...</span></div>`,
+          )
+          .join("");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin"></span> 测试中...';
+
+        try {
+          const results = await api("POST", "/api/config/proxy-test", {
+            proxies,
+          });
+          container.innerHTML = results
+            .map((r) => {
+              if (r.ok) {
+                return `<div class="proxy-row"><span class="dot ok"></span><span class="url">${r.proxy}</span><span class="lat">${r.latency_ms} ms</span></div>`;
+              }
+              return `<div class="proxy-row"><span class="dot fail"></span><span class="url">${r.proxy}</span><span class="err" title="${r.error || ""}">${r.error || "失败"}</span><span class="lat">${r.latency_ms != null ? r.latency_ms + " ms" : "--"}</span></div>`;
+            })
+            .join("");
+        } catch (e) {
+          container.innerHTML = `<div class="proxy-row"><span class="dot fail"></span><span class="url">Error</span><span class="err">${e.message}</span></div>`;
+        }
+        btn.disabled = false;
+        btn.textContent = "测试代理";
+      });
+
+      /* ========== AUTH ========== */
+      let authPhone = "";
+
+      function showStep(name) {
+        $$("#pane-auth .step").forEach((s) => s.classList.remove("active"));
+        const el = $("#step-" + name);
+        if (el) el.classList.add("active");
+      }
+
+      async function checkAuth() {
+        try {
+          const d = await api("GET", "/api/auth/status");
+          if (d.logged_in && d.user) {
+            showLoggedIn(d.user);
+            $("#hdr-badge").textContent = "已连接";
+            $("#hdr-badge").className = "badge";
+          } else if (d.needs_2fa) {
+            showStep("2fa");
+          } else {
+            showStep("phone");
+            $("#hdr-badge").textContent = "未连接";
+            $("#hdr-badge").className = "badge off";
+          }
+        } catch (e) {
+          showStep("phone");
+          $("#hdr-badge").textContent = "离线";
+          $("#hdr-badge").className = "badge off";
+        }
+      }
+
+      function showLoggedIn(u) {
+        showStep("done");
+        $("#user-avatar").textContent = (u.first_name || "?")[0].toUpperCase();
+        $("#user-name").textContent = [u.first_name, u.last_name]
+          .filter(Boolean)
+          .join(" ");
+        $("#user-meta").textContent = [
+          u.username ? "@" + u.username : "",
+          u.phone ? "+" + u.phone : "",
+        ]
+          .filter(Boolean)
+          .join(" | ");
+      }
+
+      $("#btn-send-code").addEventListener("click", async () => {
+        const phone = $("#auth-phone").value.trim();
+        if (!phone) return showAlert("#auth-alert", "err", "请输入手机号码");
+        const btn = $("#btn-send-code");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin"></span> 发送中...';
+        try {
+          await api("POST", "/api/auth/send-code", { phone });
+          authPhone = phone;
+          showAlert(
+            "#auth-alert",
+            "ok",
+            "验证码已发送，请查看 Telegram 或短信。",
+          );
+          showStep("code");
+          $("#auth-code").focus();
+        } catch (e) {
+          showAlert("#auth-alert", "err", e.message);
+        }
+        btn.disabled = false;
+        btn.textContent = "发送验证码";
+      });
+
+      $("#btn-verify").addEventListener("click", async () => {
+        const code = $("#auth-code").value.trim();
+        if (!code) return showAlert("#auth-alert", "err", "请输入验证码");
+        const btn = $("#btn-verify");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin"></span> Verifying...';
+        try {
+          const d = await api("POST", "/api/auth/sign-in", {
+            phone: authPhone,
+            code,
+          });
+          if (d.needs_2fa) {
+            showAlert(
+              "#auth-alert",
+              "info",
+              "您的账号已开启两步验证，请输入密码。",
+            );
+            showStep("2fa");
+            $("#auth-password").focus();
+          } else {
+            showAlert("#auth-alert", "ok", "登录成功！");
+            showLoggedIn(d.user);
+            $("#hdr-badge").textContent = "已连接";
+            $("#hdr-badge").className = "badge";
+          }
+        } catch (e) {
+          showAlert("#auth-alert", "err", e.message);
+        }
+        btn.disabled = false;
+        btn.textContent = "验证";
+      });
+
+      $("#btn-resend").addEventListener("click", async () => {
+        try {
+          await api("POST", "/api/auth/send-code", { phone: authPhone });
+          showAlert("#auth-alert", "ok", "验证码已重新发送！");
+        } catch (e) {
+          showAlert("#auth-alert", "err", e.message);
+        }
+      });
+
+      $("#btn-2fa").addEventListener("click", async () => {
+        const pw = $("#auth-password").value;
+        if (!pw) return showAlert("#auth-alert", "err", "请输入密码");
+        const btn = $("#btn-2fa");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin"></span> Verifying...';
+        try {
+          const d = await api("POST", "/api/auth/sign-in-2fa", {
+            password: pw,
+          });
+          showAlert("#auth-alert", "ok", "登录成功！");
+          showLoggedIn(d.user);
+          $("#hdr-badge").textContent = "已连接";
+          $("#hdr-badge").className = "badge";
+        } catch (e) {
+          showAlert("#auth-alert", "err", e.message);
+        }
+        btn.disabled = false;
+        btn.textContent = "提交密码";
+      });
+
+      $("#btn-logout").addEventListener("click", async () => {
+        if (!确认("确定要断开并退出该 Telegram 账号吗？")) return;
+        try {
+          await api("POST", "/api/auth/logout");
+          showAlert("#auth-alert", "ok", "已退出登录。");
+          showStep("phone");
+          $("#hdr-badge").textContent = "未连接";
+          $("#hdr-badge").className = "badge off";
+        } catch (e) {
+          showAlert("#auth-alert", "err", e.message);
+        }
+      });
+
+      /* ========== TASKS ========== */
+      let _tasksAutoRefresh = null;
+
+      async function loadTasks() {
+        const filter = $("#task-filter").value;
+        const qs = filter ? "?status=" + filter : "";
+        try {
+          const d = await api("GET", "/api/tasks/" + qs);
+          const tbody = $("#task-tbody");
+          if (!d.tasks || d.tasks.length === 0) {
+            tbody.innerHTML =
+              '<tr><td colspan="7" class="empty">暂无任务</td></tr>';
+            $("#task-stats").textContent = "";
+            return;
+          }
+          tbody.innerHTML = d.tasks
+            .map(
+              (t) => `
       <tr>
         <td>${t.id}</td>
         <td style="color:var(--text2)">${t.source_type}</td>
-        <td title="${t.source_url || t.file_name || ''}">${truncate(t.source_url || t.file_name, 36)}</td>
+        <td title="${t.source_url || t.file_name || ""}">${truncate(t.source_url || t.file_name, 36)}</td>
         <td><span class="status ${t.status}">${t.status}</span></td>
         <td>${fmtBytes(t.file_size)}</td>
         <td style="color:var(--text3)">${fmtTime(t.created_at)}</td>
-        <td>
-          ${t.status === 'failed' || t.status === 'cancelled' ? `<button class="btn btn-outline" style="padding:3px 10px;font-size:.75rem" onclick="retryTask(${t.id})">Retry</button>` : ''}
+        <td style="display:flex;gap:4px;flex-wrap:wrap">
+          ${t.status === "failed" || t.status === "cancelled" ? `<button class="btn btn-outline" style="padding:3px 10px;font-size:.75rem" onclick="retryTask(${t.id})">重试</button>` : ""}
+          <button class="btn btn-outline" style="padding:3px 8px;font-size:.75rem;color:var(--red)" onclick="deleteTask(${t.id})" title="删除任务">✕</button>
         </td>
       </tr>
-    `).join('');
-    $('#task-stats').textContent = `Total: ${d.total}`;
-  } catch (e) {
-    $('#task-tbody').innerHTML = `<tr><td colspan="7" class="empty" style="color:var(--red)">Error: ${e.message}</td></tr>`;
-  }
-}
+    `,
+            )
+            .join("");
+          $("#task-stats").textContent = `共 ${d.total} 条`;
+        } catch (e) {
+          $("#task-tbody").innerHTML =
+            `<tr><td colspan="7" class="empty" style="color:var(--red)">Error: ${e.message}</td></tr>`;
+        }
+      }
 
-async function retryTask(id) {
-  try {
-    await api('POST', `/api/tasks/${id}/retry`);
-    loadTasks();
-  } catch (e) { alert('Retry failed: ' + e.message); }
-}
+      async function retryTask(id) {
+        try {
+          await api("POST", `/api/tasks/${id}/retry`);
+          loadTasks();
+        } catch (e) {
+          alert("重试失败：" + e.message);
+        }
+      }
 
-$('#btn-refresh-tasks').addEventListener('click', loadTasks);
-$('#task-filter').addEventListener('change', loadTasks);
+      async function deleteTask(id) {
+        if (!confirm(`删除任务 #${id}？此操作不可撤销。`)) return;
+        try {
+          await api("DELETE", `/api/tasks/${id}`);
+          loadTasks();
+        } catch (e) {
+          alert("删除失败：" + e.message);
+        }
+      }
 
-/* ========== init ========== */
-loadConfig();
-checkAuth();
-</script>
-</body>
+      $("#btn-refresh-tasks").addEventListener("click", loadTasks);
+      $("#task-filter").addEventListener("change", loadTasks);
+
+      /* ========== PROXIES ========== */
+      const PROXY_STATUS_COLOR = {
+        active: "var(--green)",
+        failed: "var(--red)",
+        disabled: "var(--text3)",
+      };
+
+      async function loadProxies() {
+        try {
+          const list = await api("GET", "/api/proxies/");
+          const tbody = $("#proxy-tbody");
+          if (!list.length) {
+            tbody.innerHTML =
+              '<tr><td colspan="6" class="empty">未配置代理，请在上方添加或在设置中填写代理池后点击同步。</td></tr>';
+            $("#proxy-summary").textContent = "";
+            return;
+          }
+          const active = list.filter((p) => p.status === "active").length;
+          $("#proxy-summary").textContent = `${active} / ${list.length} 活跃`;
+          tbody.innerHTML = list
+            .map(
+              (p) => `
+            <tr>
+              <td style="font-family:monospace;font-size:.82rem">${p.proxy_url}</td>
+              <td><span style="color:${PROXY_STATUS_COLOR[p.status] || "inherit"};font-weight:600">${p.status}</span></td>
+              <td>${p.latency != null ? p.latency.toFixed(0) + " ms" : "--"}</td>
+              <td>${p.fail_count || 0}</td>
+              <td style="color:var(--text2);font-size:.8rem">${p.last_check_at ? new Date(p.last_check_at).toLocaleString("zh-CN", { hour12: false }) : "--"}</td>
+              <td style="display:flex;gap:4px">
+                ${p.status === "failed" ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:.78rem" onclick="enableProxy(${p.id})">启用</button>` : ""}
+                ${p.status !== "disabled" ? `<button class="btn btn-outline" style="padding:4px 10px;font-size:.78rem;color:var(--text3)" onclick="disableProxy(${p.id})">禁用</button>` : `<button class="btn btn-outline" style="padding:4px 10px;font-size:.78rem" onclick="enableProxy(${p.id})">启用</button>`}
+                <button class="btn btn-outline" style="padding:4px 10px;font-size:.78rem;color:var(--red)" onclick="deleteProxy(${p.id})">✕</button>
+              </td>
+            </tr>`,
+            )
+            .join("");
+        } catch (e) {
+          if (e.message !== "Unauthorized")
+            showAlert("#proxy-alert", "err", "加载代理失败：" + e.message);
+        }
+      }
+
+      async function addProxy() {
+        const url = $("#new-proxy-url").value.trim();
+        if (!url) return;
+        try {
+          await api("POST", "/api/proxies/", { proxy_url: url });
+          $("#new-proxy-url").value = "";
+          showAlert("#proxy-alert", "ok", `代理已添加：${url}`);
+          loadProxies();
+        } catch (e) {
+          showAlert("#proxy-alert", "err", e.message);
+        }
+      }
+
+      async function deleteProxy(id) {
+        if (!confirm("确定要删除该代理吗？")) return;
+        try {
+          await api("DELETE", `/api/proxies/${id}`);
+          loadProxies();
+        } catch (e) {
+          showAlert("#proxy-alert", "err", e.message);
+        }
+      }
+
+      async function enableProxy(id) {
+        try {
+          await api("POST", `/api/proxies/${id}/enable`);
+          loadProxies();
+        } catch (e) {
+          showAlert("#proxy-alert", "err", e.message);
+        }
+      }
+
+      async function disableProxy(id) {
+        try {
+          await api("POST", `/api/proxies/${id}/disable`);
+          loadProxies();
+        } catch (e) {
+          showAlert("#proxy-alert", "err", e.message);
+        }
+      }
+
+      async function syncProxies() {
+        try {
+          const r = await api("POST", "/api/proxies/sync");
+          showAlert("#proxy-alert", "ok", r.message);
+          loadProxies();
+        } catch (e) {
+          showAlert("#proxy-alert", "err", e.message);
+        }
+      }
+
+      async function checkAllProxies() {
+        const btn = $("#btn-check-all");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin"></span> 检查中...';
+        try {
+          const r = await api("POST", "/api/proxies/check");
+          showAlert(
+            "#proxy-alert",
+            "ok",
+            "健康检查完成：${r.ok}/${r.checked} 通过",
+          );
+          loadProxies();
+        } catch (e) {
+          showAlert("#proxy-alert", "err", e.message);
+        }
+        btn.disabled = false;
+        btn.textContent = "运行健康检查";
+      }
+
+      /* ========== API key overlay ========== */
+      function applyKey() {
+        const k = $("#key-input").value.trim();
+        if (!k) return;
+        setApiKey(k);
+        hideKeyPrompt();
+        // Retry the page load after key is set
+        loadConfig();
+        checkAuth();
+      }
+      $("#key-input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") applyKey();
+      });
+
+      /* Auto-refresh tasks every 15s when the tasks pane is active */
+      const _tasksObserver = new MutationObserver(() => {
+        const active = $("#pane-tasks").classList.contains("active");
+        if (active && !_tasksAutoRefresh) {
+          _tasksAutoRefresh = setInterval(loadTasks, 15000);
+        } else if (!active && _tasksAutoRefresh) {
+          clearInterval(_tasksAutoRefresh);
+          _tasksAutoRefresh = null;
+        }
+      });
+      _tasksObserver.observe($("#pane-tasks"), {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+
+      /* ========== init ========== */
+      loadDashboard();
+      loadConfig();
+      checkAuth();
+    </script>
+  </body>
 </html>

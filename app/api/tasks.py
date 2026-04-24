@@ -3,10 +3,12 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from rq.job import Job, NoSuchJobError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.core.redis import external_download_queue, redis_conn, retry_queue, tg_download_queue
 from app.models.task import SourceType, Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskListResponse, TaskResponse, TaskRetryResponse
 from app.services.dispatcher import TaskDispatcher
@@ -117,7 +119,7 @@ async def delete_task(
     task_id: int,
     session: AsyncSession = Depends(get_session),
 ):
-    """Delete a task."""
+    """Delete a task and cancel any pending RQ jobs for it."""
     task = await session.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -127,8 +129,24 @@ async def delete_task(
         task.status = TaskStatus.CANCELLED
         await session.commit()
 
+    # Cancel any pending/scheduled RQ jobs that carry this task_id as first arg
+    _cancel_rq_jobs_for_task(task_id)
+
     await session.delete(task)
     await session.commit()
+
+
+def _cancel_rq_jobs_for_task(task_id: int) -> None:
+    """Search all queues for jobs belonging to task_id and cancel them."""
+    all_queues = [tg_download_queue, external_download_queue, retry_queue]
+    for queue in all_queues:
+        for job_id in queue.job_ids:
+            try:
+                job = Job.fetch(job_id, connection=redis_conn)
+                if job.args and job.args[0] == task_id:
+                    job.cancel()
+            except (NoSuchJobError, Exception):
+                pass
 
 
 @router.get("/stats/summary")

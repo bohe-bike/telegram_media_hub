@@ -1,4 +1,4 @@
-"""Config management API: read / save .env through web UI."""
+"""Config management API: read / save config.toml through web UI."""
 
 from __future__ import annotations
 
@@ -6,13 +6,14 @@ import asyncio
 import time
 from pathlib import Path
 
+import tomlkit
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
 import httpx
 
-from config.settings import CONFIG_DIR, ENV_FILE, reload_settings, settings
+from config.settings import CONFIG_DIR, TOML_FILE, reload_settings, settings
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -36,38 +37,79 @@ class ConfigData(BaseModel):
     max_retries: int = 5
     retry_base_delay: int = 30
     proxy_pool: str = ""
-    ytdlp_format: str = "bestvideo+bestaudio/best"
-    ytdlp_use_aria2: bool = True
     tg_parallel_connections: int = 4
     tg_parallel_threshold: int = 10
     tg_notify_on_complete: bool = True
     tg_notify_on_fail: bool = True
+    api_secret_key: str = ""
+    proxy_fail_threshold: int = 3
+    proxy_check_interval: int = 300
 
 
 # ---- helpers ---------------------------------------------------------
 
-def _read_env() -> dict[str, str]:
-    """Parse .env into a dict (simple KEY=VALUE, ignoring comments)."""
-    data: dict[str, str] = {}
-    if not ENV_FILE.exists():
-        return data
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        data[key.strip()] = value.strip()
-    return data
+def _read_toml() -> dict:
+    """Parse config.toml into a flat dict (merges all top-level sections)."""
+    if not TOML_FILE.exists():
+        return {}
+    with open(TOML_FILE, "rb") as f:
+        import tomllib
+        data = tomllib.load(f)
+    flat: dict = {}
+    for key, val in data.items():
+        if isinstance(val, dict):
+            flat.update(val)
+        else:
+            flat[key] = val
+    return flat
 
 
-def _write_env(data: dict[str, str]) -> None:
-    """Write dict back to .env file."""
-    lines: list[str] = []
-    for k, v in data.items():
-        lines.append(f"{k}={v}")
-    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+_SECTION_ORDER: list[tuple[str, list[str]]] = [
+    ("Telegram", [
+        "tg_api_id", "tg_api_hash", "tg_session_name",
+        "tg_phone_number", "tg_monitored_chats",
+    ]),
+    ("Infrastructure", ["database_url", "redis_url", "metube_url"]),
+    ("Storage", ["storage_root", "temp_dir"]),
+    ("Workers & Retry", [
+        "tg_download_workers", "external_download_workers",
+        "max_retries", "retry_base_delay",
+    ]),
+    ("Proxy", ["proxy_pool", "proxy_fail_threshold", "proxy_check_interval"]),
+    ("TG 并行下载", [
+        "tg_parallel_connections", "tg_parallel_threshold",
+    ]),
+    ("Notifications", ["tg_notify_on_complete", "tg_notify_on_fail"]),
+    ("Security", ["api_secret_key"]),
+]
+
+
+def _write_toml(data: dict) -> None:
+    """Write config dict back to config.toml preserving section comments."""
+    doc = tomlkit.document()
+    doc.add(tomlkit.comment("Telegram Media Hub – Configuration"))
+    doc.add(tomlkit.comment("Edit values here or via the Web UI (Settings tab)."))
+    doc.add(tomlkit.nl())
+
+    written: set[str] = set()
+    for section_name, keys in _SECTION_ORDER:
+        doc.add(tomlkit.comment(f"{'=' * 60}"))
+        doc.add(tomlkit.comment(f" {section_name}"))
+        doc.add(tomlkit.comment(f"{'=' * 60}"))
+        for key in keys:
+            if key in data:
+                doc.add(key, data[key])
+                written.add(key)
+        doc.add(tomlkit.nl())
+
+    # Any keys not covered by the section order (future fields)
+    extras = {k: v for k, v in data.items() if k not in written}
+    if extras:
+        doc.add(tomlkit.comment("Additional settings"))
+        for key, val in extras.items():
+            doc.add(key, val)
+
+    TOML_FILE.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
 # ---- routes ----------------------------------------------------------
@@ -91,46 +133,48 @@ async def get_config():
         max_retries=settings.max_retries,
         retry_base_delay=settings.retry_base_delay,
         proxy_pool=settings.proxy_pool,
-        ytdlp_format=settings.ytdlp_format,
-        ytdlp_use_aria2=settings.ytdlp_use_aria2,
         tg_parallel_connections=settings.tg_parallel_connections,
         tg_parallel_threshold=settings.tg_parallel_threshold,
         tg_notify_on_complete=settings.tg_notify_on_complete,
         tg_notify_on_fail=settings.tg_notify_on_fail,
+        api_secret_key=settings.api_secret_key,
+        proxy_fail_threshold=settings.proxy_fail_threshold,
+        proxy_check_interval=settings.proxy_check_interval,
     )
 
 
 @router.put("/")
 async def save_config(body: ConfigData):
-    """Save configuration to .env and reload settings."""
-    env_map: dict[str, str] = {
-        "TG_API_ID": str(body.tg_api_id),
-        "TG_API_HASH": body.tg_api_hash,
-        "TG_SESSION_NAME": body.tg_session_name,
-        "TG_MONITORED_CHATS": body.tg_monitored_chats,
-        "TG_PHONE_NUMBER": body.tg_phone_number,
-        "DATABASE_URL": body.database_url,
-        "REDIS_URL": body.redis_url,
-        "METUBE_URL": body.metube_url,
-        "STORAGE_ROOT": body.storage_root,
-        "TEMP_DIR": body.temp_dir,
-        "TG_DOWNLOAD_WORKERS": str(body.tg_download_workers),
-        "EXTERNAL_DOWNLOAD_WORKERS": str(body.external_download_workers),
-        "MAX_RETRIES": str(body.max_retries),
-        "RETRY_BASE_DELAY": str(body.retry_base_delay),
-        "PROXY_POOL": body.proxy_pool,
-        "YTDLP_FORMAT": body.ytdlp_format,
-        "YTDLP_USE_ARIA2": str(body.ytdlp_use_aria2).lower(),
-        "TG_PARALLEL_CONNECTIONS": str(body.tg_parallel_connections),
-        "TG_PARALLEL_THRESHOLD": str(body.tg_parallel_threshold),
-        "TG_NOTIFY_ON_COMPLETE": str(body.tg_notify_on_complete).lower(),
-        "TG_NOTIFY_ON_FAIL": str(body.tg_notify_on_fail).lower(),
+    """Save configuration to config.toml and reload settings."""
+    toml_map: dict = {
+        "tg_api_id": body.tg_api_id,
+        "tg_api_hash": body.tg_api_hash,
+        "tg_session_name": body.tg_session_name,
+        "tg_monitored_chats": body.tg_monitored_chats,
+        "tg_phone_number": body.tg_phone_number,
+        "database_url": body.database_url,
+        "redis_url": body.redis_url,
+        "metube_url": body.metube_url,
+        "storage_root": body.storage_root,
+        "temp_dir": body.temp_dir,
+        "tg_download_workers": body.tg_download_workers,
+        "external_download_workers": body.external_download_workers,
+        "max_retries": body.max_retries,
+        "retry_base_delay": body.retry_base_delay,
+        "proxy_pool": body.proxy_pool,
+        "proxy_fail_threshold": body.proxy_fail_threshold,
+        "proxy_check_interval": body.proxy_check_interval,
+        "tg_parallel_connections": body.tg_parallel_connections,
+        "tg_parallel_threshold": body.tg_parallel_threshold,
+        "tg_notify_on_complete": body.tg_notify_on_complete,
+        "tg_notify_on_fail": body.tg_notify_on_fail,
+        "api_secret_key": body.api_secret_key,
     }
 
-    _write_env(env_map)
-    new_settings = reload_settings()
-    logger.info("Configuration saved and reloaded.")
-    return {"message": "Configuration saved", "env_path": str(ENV_FILE)}
+    _write_toml(toml_map)
+    reload_settings()
+    logger.info("Configuration saved to config.toml and reloaded.")
+    return {"message": "Configuration saved", "toml_path": str(TOML_FILE)}
 
 
 # ---- proxy test ------------------------------------------------------
@@ -156,12 +200,12 @@ async def _test_one_proxy(proxy_url: str) -> ProxyTestResult:
     if not proxy_url:
         return ProxyTestResult(proxy=proxy_url, ok=False, error="Empty URL")
 
+    start = time.monotonic()
     try:
-        start = time.monotonic()
         async with httpx.AsyncClient(
             proxy=proxy_url,
             timeout=TEST_TIMEOUT,
-            verify=False,
+            verify=True,
         ) as client:
             resp = await client.get(TEST_URL)
         elapsed = int((time.monotonic() - start) * 1000)

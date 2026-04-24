@@ -1,0 +1,49 @@
+# 本地测试专用 Compose override
+# 用法: docker compose -f docker-compose.yml -f docker-compose.test.yml up
+#
+# 与生产配置的区别：
+#   - app/workers 映射本地代码，无需重新构建即可实时修改
+#   - media_data 使用本地 ./data/media 目录（自动创建）
+#   - MeTube 使用本地 ./data/media 作为下载目录（外部链接下载必需）
+#   - 容器名称加 -test 后缀，避免与生产容器冲突
+
+services:
+  app:
+    container_name: media-hub-app-test
+    volumes:
+      - ./config:/app/config        # 挂载 config.toml
+      - ./app:/app/app:ro           # 本地代码热重载（只读）
+      - ./data/media:/media         # 本地媒体存储目录
+
+  tg-worker:
+    container_name: media-hub-tg-worker-test
+    volumes:
+      - ./config:/app/config
+      - ./app:/app/app:ro
+      - ./data/media:/media
+    command: rq worker tg_download retry --url redis://redis:6379/0 --with-scheduler
+
+  external-worker:
+    container_name: media-hub-external-worker-test
+    volumes:
+      - ./config:/app/config
+      - ./app:/app/app:ro
+      - ./data/media:/media
+    command: rq worker external_download retry --url redis://redis:6379/0 --with-scheduler
+
+  postgres:
+    container_name: media-hub-postgres-test
+    ports:
+      - "5433:5432"   # 避免与本机 PG 端口冲突
+
+  redis:
+    container_name: media-hub-redis-test
+    ports:
+      - "6380:6379"   # 避免与本机 Redis 端口冲突
+
+  metube:
+    container_name: media-hub-metube-test
+    volumes:
+      - ./data/media:/downloads    # 展展 test 用本地目录
+    ports:
+      - "8082:8081"               # 避免与生产端口冲突

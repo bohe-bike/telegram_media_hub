@@ -7,8 +7,8 @@ so the user gets instant feedback without checking the Web UI.
 from __future__ import annotations
 
 from loguru import logger
-from pyrogram import Client
 
+from app.core.tg_client import get_worker_client
 from config.settings import settings
 
 
@@ -85,29 +85,18 @@ async def notify_failed(
 
 
 async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
-    """Open a temporary Pyrogram client, send the reply, close."""
-    if not settings.tg_api_id or not settings.tg_api_hash:
+    """Send a reply using the shared worker Pyrogram client."""
+    client = await get_worker_client()
+    if client is None:
+        logger.debug("No TG client available – skipping notification")
         return
-
-    session_file = settings.session_dir / f"{settings.tg_session_name}.session"
-    if not session_file.exists():
-        logger.debug("No TG session – skipping notification")
-        return
-
-    client = Client(
-        name=settings.tg_session_name,
-        api_id=settings.tg_api_id,
-        api_hash=settings.tg_api_hash,
-        workdir=str(settings.session_dir),
-    )
 
     try:
-        async with client:
-            await client.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_to_message_id=message_id,
-            )
+        await client.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_to_message_id=message_id,
+        )
     except Exception as e:
         # Notification failure should never crash the worker
         logger.warning(

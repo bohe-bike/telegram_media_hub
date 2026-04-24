@@ -125,24 +125,16 @@ class TelegramListener:
 
     async def _handle_tg_photo(self, message: Message):
         """Handle Telegram photo messages."""
-        # Get the highest resolution photo
         photo = message.photo
-        photo_sizes = photo.sizes
-        if photo_sizes:
-            # Last size is usually the largest (320x320, 640x640, 800x800, etc.)
-            photo_file = photo_sizes[-1]
-            file_size = photo_file.file_size
-            file_name = f"photo_{message.id}.jpg"
-        else:
-            # Fallback if no sizes available
-            file_size = 0
-            file_name = f"photo_{message.id}.jpg"
+        # message.photo is already the highest-resolution Photo object;
+        # file_size may be None for very old photos.
+        file_size = photo.file_size or 0
+        file_name = f"photo_{message.id}.jpg"
 
         logger.info(
             f"Received TG photo from chat {message.chat.id}: "
             f"{file_name} ({file_size} bytes)"
         )
-        # Photo file_id is in message.photo.file_id
         await self.dispatcher.create_tg_download_task(
             source_type="tg_photo",
             file_id=photo.file_id,
@@ -170,18 +162,28 @@ class TelegramListener:
         )
 
     async def _handle_text_message(self, message: Message):
-        """Handle text messages, extract URLs for external download."""
+        """Handle text messages, extract URLs for external download.
+
+        Only URLs matching known supported platforms are dispatched to avoid
+        creating download tasks for arbitrary links (e.g., plain web pages).
+        """
         text = message.text or message.caption or ""
         if not text:
             return
 
-        urls = GENERAL_URL_PATTERN.findall(text)
-        if not urls:
+        # First pass: collect all URLs in the message
+        all_urls = GENERAL_URL_PATTERN.findall(text)
+        if not all_urls:
             return
 
-        for url in urls:
+        # Second pass: keep only URLs that match a supported platform
+        supported_urls = [u for u in all_urls if URL_PATTERN.search(u)]
+        if not supported_urls:
+            return
+
+        for url in supported_urls:
             url = url.strip()
-            logger.info(f"Extracted URL from chat {message.chat.id}: {url}")
+            logger.info(f"Extracted supported URL from chat {message.chat.id}: {url}")
             await self.dispatcher.create_external_download_task(
                 source_url=url,
                 chat_id=message.chat.id,

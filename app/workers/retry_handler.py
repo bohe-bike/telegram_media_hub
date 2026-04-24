@@ -1,7 +1,6 @@
 """Retry handler with exponential backoff and crash recovery."""
 
 import asyncio
-import math
 from datetime import datetime, timedelta
 
 from loguru import logger
