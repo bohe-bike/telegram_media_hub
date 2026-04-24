@@ -1,0 +1,29 @@
+# Telegram
+pyrogram==2.0.106
+# tgcrypto==1.2.5  # Windows 需要 Visual Studio Build Tools 才能编译
+
+# Web Framework
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+
+# Database
+sqlalchemy[asyncio]==2.0.49
+asyncpg==0.31.0
+alembic==1.18.4
+
+# Redis / Task Queue
+redis==7.4.0
+rq==2.8.0
+
+# Download
+yt-dlp==2026.3.17
+
+# Utils
+pydantic==2.13.3
+pydantic-settings==2.14.0
+httpx==0.28.1
+aiofiles==25.1.0
+python-dotenv==1.2.2
+
+# Logging
+loguru==0.7.3

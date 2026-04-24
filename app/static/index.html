@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram Media Hub</title>
+<style>
+/* ========== reset & base ========== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--bg2:#181b24;--bg3:#1e222d;
+  --border:#2a2e3b;--border-h:#3a3f50;
+  --text:#e4e6eb;--text2:#9ca0ab;--text3:#6b7080;
+  --accent:#3b82f6;--accent-h:#2563eb;
+  --green:#22c55e;--red:#ef4444;--yellow:#eab308;
+  --radius:8px;
+}
+html{font-size:14px}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
+
+/* ========== layout ========== */
+.shell{max-width:860px;margin:0 auto;padding:24px 16px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:28px}
+header h1{font-size:1.4rem;font-weight:600}
+header .badge{font-size:.7rem;padding:2px 8px;border-radius:10px;
+  background:var(--green);color:#000;font-weight:600}
+header .badge.off{background:var(--red)}
+
+/* ========== tabs ========== */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:24px}
+.tab{padding:10px 20px;cursor:pointer;color:var(--text2);font-weight:500;
+  border-bottom:2px solid transparent;transition:.15s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.pane{display:none}
+.pane.active{display:block}
+
+/* ========== card / form ========== */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;margin-bottom:20px}
+.card h2{font-size:1.05rem;margin-bottom:16px;font-weight:600}
+.card h3{font-size:.92rem;margin:18px 0 10px;color:var(--text2);font-weight:500;
+  text-transform:uppercase;letter-spacing:.5px}
+.field{margin-bottom:14px}
+.field label{display:block;margin-bottom:4px;color:var(--text2);font-size:.85rem}
+.field input,.field textarea,.field select{width:100%;padding:9px 12px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text);font-size:.9rem;outline:none;transition:.15s}
+.field input:focus,.field textarea:focus{border-color:var(--accent)}
+.field .hint{font-size:.75rem;color:var(--text3);margin-top:3px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:9px 22px;border:none;border-radius:var(--radius);font-size:.9rem;
+  font-weight:500;cursor:pointer;transition:.15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-h)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
+.btn-outline:hover{border-color:var(--text2);color:var(--text)}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger:hover{opacity:.85}
+.btn-group{display:flex;gap:10px;margin-top:18px}
+
+/* alerts */
+.alert{padding:12px 16px;border-radius:var(--radius);font-size:.88rem;margin-bottom:16px;display:none}
+.alert.ok{display:block;background:#22c55e20;border:1px solid #22c55e40;color:var(--green)}
+.alert.err{display:block;background:#ef444420;border:1px solid #ef444440;color:var(--red)}
+.alert.info{display:block;background:#3b82f620;border:1px solid #3b82f640;color:var(--accent)}
+.alert.warn{display:block;background:#eab30820;border:1px solid #eab30840;color:var(--yellow)}
+
+/* auth steps */
+.step{display:none}
+.step.active{display:block}
+.user-card{display:flex;align-items:center;gap:16px;padding:16px;
+  background:var(--bg3);border-radius:var(--radius)}
+.user-card .avatar{width:48px;height:48px;border-radius:50%;background:var(--accent);
+  display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:600;color:#fff}
+.user-card .info{flex:1}
+.user-card .name{font-weight:600}
+.user-card .meta{color:var(--text2);font-size:.85rem}
+
+/* task table */
+.tbl{width:100%;border-collapse:collapse;font-size:.85rem}
+.tbl th,.tbl td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
+.tbl th{color:var(--text2);font-weight:500;font-size:.78rem;text-transform:uppercase;letter-spacing:.4px}
+.tbl tr:hover td{background:var(--bg3)}
+.status{padding:2px 10px;border-radius:10px;font-size:.75rem;font-weight:600}
+.status.completed{background:#22c55e20;color:var(--green)}
+.status.downloading{background:#3b82f620;color:var(--accent)}
+.status.pending{background:#eab30820;color:var(--yellow)}
+.status.failed,.status.cancelled{background:#ef444420;color:var(--red)}
+.status.retrying{background:#f9731620;color:#f97316}
+.empty{text-align:center;color:var(--text3);padding:40px 0}
+
+/* proxy test results */
+.proxy-results{margin-top:10px}
+.proxy-row{display:flex;align-items:center;gap:10px;padding:8px 12px;
+  border-radius:var(--radius);margin-bottom:4px;font-size:.85rem;background:var(--bg3)}
+.proxy-row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.proxy-row .dot.ok{background:var(--green)}
+.proxy-row .dot.fail{background:var(--red)}
+.proxy-row .dot.wait{background:var(--text3);animation:pulse 1s infinite}
+.proxy-row .url{flex:1;color:var(--text);font-family:monospace;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proxy-row .lat{color:var(--text2);min-width:70px;text-align:right}
+.proxy-row .err{color:var(--red);font-size:.78rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* spinner */
+.spin{display:inline-block;width:16px;height:16px;border:2px solid #fff4;
+  border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* responsive */
+@media(max-width:600px){.row{grid-template-columns:1fr}.tabs{overflow-x:auto}
+  .tab{white-space:nowrap;padding:10px 14px;font-size:.88rem}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- header -->
+<header>
+  <h1>Telegram Media Hub</h1>
+  <span class="badge" id="hdr-badge">--</span>
+</header>
+
+<!-- tabs -->
+<div class="tabs">
+  <div class="tab active" data-pane="pane-settings">Settings</div>
+  <div class="tab" data-pane="pane-auth">TG Login</div>
+  <div class="tab" data-pane="pane-tasks">Tasks</div>
+</div>
+
+<!-- ===================== SETTINGS PANE ===================== -->
+<div id="pane-settings" class="pane active">
+  <div id="cfg-alert" class="alert"></div>
+  <form id="cfg-form" autocomplete="off">
+
+    <div class="card">
+      <h2>Telegram</h2>
+      <div class="row">
+        <div class="field">
+          <label>API ID</label>
+          <input name="tg_api_id" type="number" placeholder="123456">
+          <div class="hint">my.telegram.org -> API development tools</div>
+        </div>
+        <div class="field">
+          <label>API Hash</label>
+          <input name="tg_api_hash" placeholder="abcdef1234567890">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Session Name</label>
+          <input name="tg_session_name" placeholder="media_hub">
+        </div>
+        <div class="field">
+          <label>Phone Number</label>
+          <input name="tg_phone_number" placeholder="+8613800000000">
+        </div>
+      </div>
+      <div class="field">
+        <label>Monitored Chat IDs</label>
+        <input name="tg_monitored_chats" placeholder="-1001234567890,-1009876543210">
+        <div class="hint">Comma-separated. Leave empty to monitor all chats.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Infrastructure</h2>
+      <div class="field">
+        <label>Database URL</label>
+        <input name="database_url" placeholder="postgresql+asyncpg://user:pass@host:5432/db">
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Redis URL</label>
+          <input name="redis_url" placeholder="redis://redis:6379/0">
+        </div>
+        <div class="field">
+          <label>MeTube URL</label>
+          <input name="metube_url" placeholder="http://metube:8081">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Storage</h2>
+      <div class="row">
+        <div class="field">
+          <label>Storage Root</label>
+          <input name="storage_root" placeholder="/media">
+        </div>
+        <div class="field">
+          <label>Temp Directory</label>
+          <input name="temp_dir" placeholder="/media/temp">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Workers & Retry</h2>
+      <div class="row">
+        <div class="field">
+          <label>TG Download Workers</label>
+          <input name="tg_download_workers" type="number" min="1" max="20">
+        </div>
+        <div class="field">
+          <label>External Download Workers</label>
+          <input name="external_download_workers" type="number" min="1" max="20">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Max Retries</label>
+          <input name="max_retries" type="number" min="0" max="20">
+        </div>
+        <div class="field">
+          <label>Retry Base Delay (sec)</label>
+          <input name="retry_base_delay" type="number" min="5">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Download</h2>
+      <div class="row">
+        <div class="field">
+          <label>yt-dlp Format</label>
+          <input name="ytdlp_format" placeholder="bestvideo+bestaudio/best">
+        </div>
+        <div class="field">
+          <label>Use aria2c</label>
+          <select name="ytdlp_use_aria2">
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Proxy Pool</label>
+        <input name="proxy_pool" placeholder="http://proxy1:7890,socks5://proxy2:1080">
+        <div class="hint">Comma-separated proxy URLs. Leave empty if not needed.</div>
+      </div>
+      <button type="button" class="btn btn-outline" id="btn-proxy-test" style="margin-top:2px">
+        Test Proxies
+      </button>
+      <div id="proxy-results" class="proxy-results"></div>
+    </div>
+
+    <div class="card">
+      <h2>TG Parallel Download</h2>
+      <div class="row">
+        <div class="field">
+          <label>Parallel Connections</label>
+          <input name="tg_parallel_connections" type="number" min="1" max="8">
+          <div class="hint">Per-file concurrent chunk streams (default: 4)</div>
+        </div>
+        <div class="field">
+          <label>Parallel Threshold (MB)</label>
+          <input name="tg_parallel_threshold" type="number" min="1" max="100">
+          <div class="hint">Files below this size use single-stream download</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Notification</h2>
+      <div class="row">
+        <div class="field">
+          <label>Notify on Complete</label>
+          <select name="tg_notify_on_complete">
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <div class="hint">Reply in TG chat when download finishes</div>
+        </div>
+        <div class="field">
+          <label>Notify on Fail</label>
+          <select name="tg_notify_on_fail">
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <div class="hint">Reply in TG chat when download fails</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button type="submit" class="btn btn-primary" id="cfg-save">Save Configuration</button>
+      <button type="button" class="btn btn-outline" id="cfg-reload">Reset</button>
+    </div>
+  </form>
+</div>
+
+<!-- ===================== AUTH PANE ===================== -->
+<div id="pane-auth" class="pane">
+  <div id="auth-alert" class="alert"></div>
+
+  <!-- already logged in -->
+  <div id="step-done" class="step">
+    <div class="card">
+      <h2>Account Connected</h2>
+      <div class="user-card" id="user-card">
+        <div class="avatar" id="user-avatar">?</div>
+        <div class="info">
+          <div class="name" id="user-name">--</div>
+          <div class="meta" id="user-meta">--</div>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-danger" id="btn-logout">Disconnect & Logout</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- step 1: phone -->
+  <div id="step-phone" class="step">
+    <div class="card">
+      <h2>Step 1 &mdash; Enter Phone Number</h2>
+      <p style="color:var(--text2);margin-bottom:16px">
+        Enter the phone number associated with your Telegram account.
+        A verification code will be sent via Telegram or SMS.
+      </p>
+      <div class="field">
+        <label>Phone Number</label>
+        <input id="auth-phone" placeholder="+8613800000000">
+        <div class="hint">Include country code, e.g. +86, +1</div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" id="btn-send-code">Send Verification Code</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- step 2: code -->
+  <div id="step-code" class="step">
+    <div class="card">
+      <h2>Step 2 &mdash; Enter Verification Code</h2>
+      <p style="color:var(--text2);margin-bottom:16px">
+        Enter the code you received in Telegram or via SMS.
+      </p>
+      <div class="field">
+        <label>Verification Code</label>
+        <input id="auth-code" placeholder="12345" maxlength="10" style="letter-spacing:6px;font-size:1.3rem;text-align:center">
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" id="btn-verify">Verify Code</button>
+        <button class="btn btn-outline" id="btn-resend">Resend Code</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- step 3: 2FA -->
+  <div id="step-2fa" class="step">
+    <div class="card">
+      <h2>Step 3 &mdash; Two-Factor Authentication</h2>
+      <p style="color:var(--text2);margin-bottom:16px">
+        Your account has 2FA enabled. Enter your cloud password.
+      </p>
+      <div class="field">
+        <label>Cloud Password</label>
+        <input id="auth-password" type="password" placeholder="Enter your 2FA password">
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" id="btn-2fa">Submit Password</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== TASKS PANE ===================== -->
+<div id="pane-tasks" class="pane">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="task-filter" class="btn btn-outline" style="padding:7px 12px;font-size:.85rem">
+        <option value="">All Status</option>
+        <option value="pending">Pending</option>
+        <option value="downloading">Downloading</option>
+        <option value="completed">Completed</option>
+        <option value="failed">Failed</option>
+        <option value="retrying">Retrying</option>
+      </select>
+    </div>
+    <button class="btn btn-outline" id="btn-refresh-tasks" style="font-size:.85rem">Refresh</button>
+  </div>
+  <div class="card" style="padding:0;overflow-x:auto">
+    <table class="tbl">
+      <thead>
+        <tr><th>#</th><th>Type</th><th>Source</th><th>Status</th><th>Size</th><th>Time</th><th>Action</th></tr>
+      </thead>
+      <tbody id="task-tbody">
+        <tr><td colspan="7" class="empty">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="task-stats" style="color:var(--text3);font-size:.8rem;text-align:right;margin-top:6px"></div>
+</div>
+
+</div><!-- /shell -->
+
+<script>
+/* ========== helpers ========== */
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const API = '';  // same origin
+
+function alert_(id, cls, msg) {
+  const el = $(id);
+  el.className = 'alert ' + cls;
+  el.textContent = msg;
+}
+function alertHide(id) { $(id).className = 'alert'; $(id).style.display = 'none'; }
+function showAlert(id, cls, msg) { const el = $(id); el.className = 'alert ' + cls; el.textContent = msg; el.style.display = 'block'; }
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+  return data;
+}
+
+function fmtBytes(b) {
+  if (!b) return '--';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+function fmtTime(s) {
+  if (!s) return '--';
+  return new Date(s).toLocaleString('zh-CN', { hour12: false });
+}
+function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '...' : s || '--'; }
+
+/* ========== tabs ========== */
+$$('.tab').forEach(t => t.addEventListener('click', () => {
+  $$('.tab').forEach(x => x.classList.remove('active'));
+  $$('.pane').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  $('#' + t.dataset.pane).classList.add('active');
+  if (t.dataset.pane === 'pane-tasks') loadTasks();
+  if (t.dataset.pane === 'pane-auth') checkAuth();
+}));
+
+/* ========== SETTINGS ========== */
+async function loadConfig() {
+  try {
+    const d = await api('GET', '/api/config/');
+    const form = $('#cfg-form');
+    Object.keys(d).forEach(k => {
+      const el = form.elements[k];
+      if (!el) return;
+      if (el.tagName === 'SELECT') el.value = String(d[k]);
+      else el.value = d[k];
+    });
+  } catch (e) { showAlert('#cfg-alert', 'warn', 'Could not load config (server may be starting): ' + e.message); }
+}
+
+$('#cfg-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('#cfg-save');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Saving...';
+  try {
+    const fd = new FormData(e.target);
+    const body = {};
+    for (const [k, v] of fd.entries()) {
+      if (['tg_api_id','tg_download_workers','external_download_workers','max_retries','retry_base_delay','tg_parallel_connections','tg_parallel_threshold'].includes(k))
+        body[k] = parseInt(v) || 0;
+      else if (['ytdlp_use_aria2','tg_notify_on_complete','tg_notify_on_fail'].includes(k)) body[k] = v === 'true';
+      else body[k] = v;
+    }
+    await api('PUT', '/api/config/', body);
+    showAlert('#cfg-alert', 'ok', 'Configuration saved successfully. Restart services to apply changes.');
+  } catch (e) { showAlert('#cfg-alert', 'err', 'Save failed: ' + e.message); }
+  btn.disabled = false; btn.textContent = 'Save Configuration';
+});
+
+$('#cfg-reload').addEventListener('click', () => { alertHide('#cfg-alert'); loadConfig(); });
+
+/* ========== PROXY TEST ========== */
+$('#btn-proxy-test').addEventListener('click', async () => {
+  const raw = $('[name="proxy_pool"]').value.trim();
+  if (!raw) { showAlert('#cfg-alert', 'warn', 'Enter at least one proxy URL first.'); return; }
+
+  const proxies = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const container = $('#proxy-results');
+  const btn = $('#btn-proxy-test');
+
+  // Show waiting state for each proxy
+  container.innerHTML = proxies.map(p =>
+    `<div class="proxy-row"><span class="dot wait"></span><span class="url">${p}</span><span class="lat">testing...</span></div>`
+  ).join('');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Testing...';
+
+  try {
+    const results = await api('POST', '/api/config/proxy-test', { proxies });
+    container.innerHTML = results.map(r => {
+      if (r.ok) {
+        return `<div class="proxy-row"><span class="dot ok"></span><span class="url">${r.proxy}</span><span class="lat">${r.latency_ms} ms</span></div>`;
+      }
+      return `<div class="proxy-row"><span class="dot fail"></span><span class="url">${r.proxy}</span><span class="err" title="${r.error || ''}">${r.error || 'failed'}</span><span class="lat">${r.latency_ms != null ? r.latency_ms + ' ms' : '--'}</span></div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="proxy-row"><span class="dot fail"></span><span class="url">Error</span><span class="err">${e.message}</span></div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Test Proxies';
+});
+
+/* ========== AUTH ========== */
+let authPhone = '';
+
+function showStep(name) {
+  $$('#pane-auth .step').forEach(s => s.classList.remove('active'));
+  const el = $('#step-' + name);
+  if (el) el.classList.add('active');
+}
+
+async function checkAuth() {
+  try {
+    const d = await api('GET', '/api/auth/status');
+    if (d.logged_in && d.user) {
+      showLoggedIn(d.user);
+      $('#hdr-badge').textContent = 'Connected';
+      $('#hdr-badge').className = 'badge';
+    } else if (d.needs_2fa) {
+      showStep('2fa');
+    } else {
+      showStep('phone');
+      $('#hdr-badge').textContent = 'Not Connected';
+      $('#hdr-badge').className = 'badge off';
+    }
+  } catch (e) {
+    showStep('phone');
+    $('#hdr-badge').textContent = 'Offline';
+    $('#hdr-badge').className = 'badge off';
+  }
+}
+
+function showLoggedIn(u) {
+  showStep('done');
+  $('#user-avatar').textContent = (u.first_name || '?')[0].toUpperCase();
+  $('#user-name').textContent = [u.first_name, u.last_name].filter(Boolean).join(' ');
+  $('#user-meta').textContent = [u.username ? '@' + u.username : '', u.phone ? '+' + u.phone : ''].filter(Boolean).join(' | ');
+}
+
+$('#btn-send-code').addEventListener('click', async () => {
+  const phone = $('#auth-phone').value.trim();
+  if (!phone) return showAlert('#auth-alert', 'err', 'Please enter your phone number');
+  const btn = $('#btn-send-code');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Sending...';
+  try {
+    await api('POST', '/api/auth/send-code', { phone });
+    authPhone = phone;
+    showAlert('#auth-alert', 'ok', 'Verification code sent! Check your Telegram or SMS.');
+    showStep('code');
+    $('#auth-code').focus();
+  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
+  btn.disabled = false; btn.textContent = 'Send Verification Code';
+});
+
+$('#btn-verify').addEventListener('click', async () => {
+  const code = $('#auth-code').value.trim();
+  if (!code) return showAlert('#auth-alert', 'err', 'Please enter the verification code');
+  const btn = $('#btn-verify');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Verifying...';
+  try {
+    const d = await api('POST', '/api/auth/sign-in', { phone: authPhone, code });
+    if (d.needs_2fa) {
+      showAlert('#auth-alert', 'info', 'Your account has 2FA. Please enter your password.');
+      showStep('2fa');
+      $('#auth-password').focus();
+    } else {
+      showAlert('#auth-alert', 'ok', 'Login successful!');
+      showLoggedIn(d.user);
+      $('#hdr-badge').textContent = 'Connected';
+      $('#hdr-badge').className = 'badge';
+    }
+  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
+  btn.disabled = false; btn.textContent = 'Verify Code';
+});
+
+$('#btn-resend').addEventListener('click', async () => {
+  try {
+    await api('POST', '/api/auth/send-code', { phone: authPhone });
+    showAlert('#auth-alert', 'ok', 'Code resent!');
+  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
+});
+
+$('#btn-2fa').addEventListener('click', async () => {
+  const pw = $('#auth-password').value;
+  if (!pw) return showAlert('#auth-alert', 'err', 'Please enter your password');
+  const btn = $('#btn-2fa');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Verifying...';
+  try {
+    const d = await api('POST', '/api/auth/sign-in-2fa', { password: pw });
+    showAlert('#auth-alert', 'ok', 'Login successful!');
+    showLoggedIn(d.user);
+    $('#hdr-badge').textContent = 'Connected';
+    $('#hdr-badge').className = 'badge';
+  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
+  btn.disabled = false; btn.textContent = 'Submit Password';
+});
+
+$('#btn-logout').addEventListener('click', async () => {
+  if (!confirm('Are you sure you want to disconnect this Telegram account?')) return;
+  try {
+    await api('POST', '/api/auth/logout');
+    showAlert('#auth-alert', 'ok', 'Logged out.');
+    showStep('phone');
+    $('#hdr-badge').textContent = 'Not Connected';
+    $('#hdr-badge').className = 'badge off';
+  } catch (e) { showAlert('#auth-alert', 'err', e.message); }
+});
+
+/* ========== TASKS ========== */
+async function loadTasks() {
+  const filter = $('#task-filter').value;
+  const qs = filter ? '?status=' + filter : '';
+  try {
+    const d = await api('GET', '/api/tasks/' + qs);
+    const tbody = $('#task-tbody');
+    if (!d.tasks || d.tasks.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No tasks yet</td></tr>';
+      $('#task-stats').textContent = '';
+      return;
+    }
+    tbody.innerHTML = d.tasks.map(t => `
+      <tr>
+        <td>${t.id}</td>
+        <td style="color:var(--text2)">${t.source_type}</td>
+        <td title="${t.source_url || t.file_name || ''}">${truncate(t.source_url || t.file_name, 36)}</td>
+        <td><span class="status ${t.status}">${t.status}</span></td>
+        <td>${fmtBytes(t.file_size)}</td>
+        <td style="color:var(--text3)">${fmtTime(t.created_at)}</td>
+        <td>
+          ${t.status === 'failed' || t.status === 'cancelled' ? `<button class="btn btn-outline" style="padding:3px 10px;font-size:.75rem" onclick="retryTask(${t.id})">Retry</button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+    $('#task-stats').textContent = `Total: ${d.total}`;
+  } catch (e) {
+    $('#task-tbody').innerHTML = `<tr><td colspan="7" class="empty" style="color:var(--red)">Error: ${e.message}</td></tr>`;
+  }
+}
+
+async function retryTask(id) {
+  try {
+    await api('POST', `/api/tasks/${id}/retry`);
+    loadTasks();
+  } catch (e) { alert('Retry failed: ' + e.message); }
+}
+
+$('#btn-refresh-tasks').addEventListener('click', loadTasks);
+$('#task-filter').addEventListener('change', loadTasks);
+
+/* ========== init ========== */
+loadConfig();
+checkAuth();
+</script>
+</body>
+</html>

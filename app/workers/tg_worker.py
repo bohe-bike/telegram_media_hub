@@ -1,0 +1,172 @@
+"""Telegram media download worker.
+
+Supports parallel chunk downloading for large files and sends
+completion / failure notifications back to the originating TG chat.
+"""
+
+import asyncio
+import os
+import shutil
+import time
+from pathlib import Path
+
+from loguru import logger
+from pyrogram import Client
+from sqlalchemy import update
+
+from app.core.database import async_session_factory
+from app.models.task import SourceType, Task, TaskStatus
+from app.services.notifier import notify_complete, notify_failed
+from app.services.tg_downloader import download_tg_file
+from app.workers.retry_handler import schedule_retry
+from config.settings import settings
+
+
+async def _do_download(task_id: int):
+    """Actual async download logic for TG media."""
+    # ---- load task --------------------------------------------------
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            logger.error(f"Task #{task_id} not found")
+            return
+
+        if task.status not in (TaskStatus.PENDING, TaskStatus.RETRYING):
+            logger.warning(f"Task #{task_id} skipped, status={task.status}")
+            return
+
+        task.status = TaskStatus.DOWNLOADING
+        await session.commit()
+
+        # Copy fields we need outside session scope
+        file_id = task.telegram_file_id
+        file_name = task.file_name
+        file_size = task.file_size or 0
+        source_type = task.source_type
+        chat_id = task.telegram_chat_id
+        message_id = task.telegram_message_id
+
+    logger.info(f"Starting TG download for task #{task_id}: {file_name}")
+
+    # ---- paths ------------------------------------------------------
+    type_dir_map = {
+        SourceType.TG_VIDEO: "telegram/video",
+        SourceType.TG_DOCUMENT: "telegram/document",
+        SourceType.TG_PHOTO: "telegram/photo",
+        SourceType.TG_AUDIO: "telegram/audio",
+    }
+    sub_dir = type_dir_map.get(SourceType(source_type))
+    if sub_dir is None:
+        raise ValueError(f"Unsupported source type: {source_type}")
+    target_dir = settings.storage_path / sub_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = settings.temp_path
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    temp_file = temp_dir / f"{file_name}.tmp"
+    final_file = target_dir / file_name
+
+    # ---- download ---------------------------------------------------
+    try:
+        client = Client(
+            name=settings.tg_session_name,
+            api_id=settings.tg_api_id,
+            api_hash=settings.tg_api_hash,
+            workdir=str(settings.session_dir),
+        )
+
+        async with client:
+            start_time = time.time()
+
+            # Use parallel downloader (auto-fallback for small files)
+            await download_tg_file(
+                client=client,
+                file_id_str=file_id,
+                file_size=file_size,
+                dest_path=temp_file,
+                progress=lambda cur, tot: _progress_callback(
+                    task_id, cur, tot),
+            )
+
+            elapsed = time.time() - start_time
+
+        # Move temp -> final
+        if temp_file.exists():
+            shutil.move(str(temp_file), str(final_file))
+        else:
+            raise RuntimeError("Downloaded temp file not found")
+
+        actual_size = os.path.getsize(str(final_file))
+        speed = actual_size / elapsed if elapsed > 0 else 0
+
+        # ---- mark completed -----------------------------------------
+        async with async_session_factory() as session:
+            await session.execute(
+                update(Task)
+                .where(Task.id == task_id)
+                .values(
+                    status=TaskStatus.COMPLETED,
+                    local_path=str(final_file),
+                    file_size=actual_size,
+                    downloaded_size=actual_size,
+                    speed=speed,
+                )
+            )
+            await session.commit()
+
+        logger.info(
+            f"Task #{task_id} completed: {final_file} "
+            f"({actual_size} bytes, {speed:.0f} B/s)"
+        )
+
+        # ---- notify TG chat -----------------------------------------
+        await notify_complete(
+            chat_id=chat_id,
+            message_id=message_id,
+            file_name=file_name,
+            file_size=actual_size,
+            speed=speed,
+            local_path=str(final_file),
+        )
+
+    except Exception as e:
+        logger.error(f"Task #{task_id} failed: {e}")
+
+        # Clean up temp
+        if temp_file.exists():
+            temp_file.unlink(missing_ok=True)
+
+        # Schedule retry & persist error
+        async with async_session_factory() as session:
+            task = await session.get(Task, task_id)
+            if task:
+                task.error_message = str(e)
+                schedule_retry(session, task)
+                await session.commit()
+
+                await notify_failed(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    file_name=file_name,
+                    error=str(e),
+                    retry_count=task.retry_count,
+                    max_retries=task.max_retries,
+                )
+
+
+def _progress_callback(task_id: int, current: int, total: int):
+    """Log download progress (every ~10 %)."""
+    if total > 0:
+        pct = current * 100 / total
+        if int(pct) % 10 == 0:
+            logger.debug(f"Task #{task_id}: {pct:.0f}% ({current}/{total})")
+
+
+def download_tg_media(task_id: int):
+    """Entry point for RQ worker (sync wrapper for async logic)."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_do_download(task_id))
+    finally:
+        loop.close()

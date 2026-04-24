@@ -1,0 +1,121 @@
+services:
+  # ==========================================
+  # FastAPI app + Telegram listener
+  # ==========================================
+  app:
+    build: .
+    container_name: media-hub-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./config/.env
+    volumes:
+      - ./config:/app/config
+      - media_data:/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+
+  # ==========================================
+  # TG download worker
+  # ==========================================
+  tg-worker:
+    build: .
+    container_name: media-hub-tg-worker
+    restart: unless-stopped
+    env_file:
+      - ./config/.env
+    volumes:
+      - ./config:/app/config
+      - media_data:/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: rq worker tg_download retry --url ${REDIS_URL:-redis://redis:6379/0} --with-scheduler
+
+  # ==========================================
+  # External download worker
+  # ==========================================
+  external-worker:
+    build: .
+    container_name: media-hub-external-worker
+    restart: unless-stopped
+    env_file:
+      - ./config/.env
+    volumes:
+      - ./config:/app/config
+      - media_data:/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: rq worker external_download retry --url ${REDIS_URL:-redis://redis:6379/0} --with-scheduler
+
+  # ==========================================
+  # PostgreSQL
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: media-hub-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: media_hub
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # Redis
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: media-hub-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # MeTube (optional - for web-based yt-dlp)
+  # ==========================================
+  metube:
+    image: ghcr.io/alexta69/metube:latest
+    container_name: media-hub-metube
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - media_data:/downloads
+    environment:
+      - DOWNLOAD_DIR=/downloads/external
+
+volumes:
+  pg_data:
+  redis_data:
+  media_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${STORAGE_ROOT:-./media}

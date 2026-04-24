@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(docker-compose *)",
+      "Bash(copy *)",
+      "Bash(pip install *)",
+      "Bash(c:\\users\\xyyl\\appdata\\local\\programs\\python\\python313\\python.exe *)",
+      "Bash(findstr *)"
+    ]
+  },
+  "$version": 3
+}

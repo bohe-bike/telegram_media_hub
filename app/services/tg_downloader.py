@@ -1,0 +1,241 @@
+"""Parallel chunk downloader for Telegram files via MTProto.
+
+Pyrogram's default `download_media()` uses a single connection to pull
+chunks sequentially.  For large files this module opens N concurrent
+chunk streams on the correct DC session, writing them to a pre-allocated
+temp file at the right offsets, then returns the completed path.
+
+For small files (< threshold) it falls back to the standard single-stream
+download to avoid the overhead.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+from typing import Callable, Optional
+
+from loguru import logger
+from pyrogram import Client, raw
+from pyrogram.file_id import FileId, PHOTO_TYPES
+from pyrogram.session import Session
+
+from config.settings import settings
+
+CHUNK_SIZE = 1024 * 1024  # 1 MB – Telegram maximum per GetFile call
+
+
+# ------------------------------------------------------------------
+# Public API
+# ------------------------------------------------------------------
+
+async def download_tg_file(
+    client: Client,
+    file_id_str: str,
+    file_size: int,
+    dest_path: Path,
+    num_workers: int | None = None,
+    progress: Optional[Callable[[int, int], None]] = None,
+) -> Path:
+    """Download a TG file – automatically choose single vs parallel mode.
+
+    Returns the *final* path on disk (same as *dest_path*).
+    """
+    workers = num_workers or settings.tg_parallel_connections
+    threshold_bytes = settings.tg_parallel_threshold * 1024 * 1024
+
+    if file_size <= threshold_bytes or workers <= 1:
+        logger.info(
+            f"Using single-stream download for {dest_path.name} "
+            f"({file_size} bytes)"
+        )
+        return await _single_stream(client, file_id_str, dest_path, progress)
+
+    logger.info(
+        f"Using parallel download ({workers} workers) for {dest_path.name} "
+        f"({file_size} bytes)"
+    )
+    try:
+        return await _parallel_stream(
+            client, file_id_str, file_size, dest_path, workers, progress,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Parallel download failed ({exc}), falling back to single-stream"
+        )
+        # Clean up partial file
+        if dest_path.exists():
+            dest_path.unlink(missing_ok=True)
+        return await _single_stream(client, file_id_str, dest_path, progress)
+
+
+# ------------------------------------------------------------------
+# Single-stream (standard Pyrogram)
+# ------------------------------------------------------------------
+
+async def _single_stream(
+    client: Client,
+    file_id_str: str,
+    dest_path: Path,
+    progress: Optional[Callable] = None,
+) -> Path:
+    downloaded = await client.download_media(
+        message=file_id_str,
+        file_name=str(dest_path),
+        progress=progress,
+    )
+    if downloaded and os.path.exists(downloaded):
+        # Pyrogram may return a slightly different path; rename if needed
+        dl = Path(downloaded)
+        if dl != dest_path:
+            dl.rename(dest_path)
+        return dest_path
+    raise RuntimeError("Pyrogram download_media returned no file")
+
+
+# ------------------------------------------------------------------
+# Parallel-stream
+# ------------------------------------------------------------------
+
+async def _parallel_stream(
+    client: Client,
+    file_id_str: str,
+    file_size: int,
+    dest_path: Path,
+    num_workers: int,
+    progress: Optional[Callable] = None,
+) -> Path:
+    file_id = FileId.decode(file_id_str)
+    dc_id = file_id.dc_id
+
+    location = _build_location(file_id)
+    session = await _get_media_session(client, dc_id)
+
+    total_chunks = (file_size + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+    # Pre-allocate the output file
+    with open(dest_path, "wb") as f:
+        f.truncate(file_size)
+
+    downloaded_bytes = 0
+    lock = asyncio.Lock()
+    sem = asyncio.Semaphore(num_workers)
+
+    async def _fetch_chunk(idx: int) -> None:
+        nonlocal downloaded_bytes
+        offset = idx * CHUNK_SIZE
+        limit = min(CHUNK_SIZE, file_size - offset)
+
+        async with sem:
+            for attempt in range(3):
+                try:
+                    resp = await session.invoke(
+                        raw.functions.upload.GetFile(
+                            location=location,
+                            offset=offset,
+                            limit=limit,
+                            precise=True,
+                        )
+                    )
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        raise
+                    logger.debug(
+                        f"Chunk {idx} attempt {attempt+1} failed: {e}")
+                    await asyncio.sleep(0.5 * (attempt + 1))
+
+            data = resp.bytes
+
+        # Write at the correct position (file handle per-write to avoid
+        # holding an fd across awaits)
+        with open(dest_path, "r+b") as f:
+            f.seek(offset)
+            f.write(data)
+
+        async with lock:
+            downloaded_bytes += len(data)
+            if progress:
+                try:
+                    progress(downloaded_bytes, file_size)
+                except Exception:
+                    pass
+
+    tasks = [_fetch_chunk(i) for i in range(total_chunks)]
+    await asyncio.gather(*tasks)
+
+    # Verify file size
+    actual = dest_path.stat().st_size
+    if actual != file_size:
+        raise RuntimeError(
+            f"Size mismatch: expected {file_size}, got {actual}"
+        )
+
+    return dest_path
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+
+def _build_location(fid: FileId):
+    """Build the raw InputFileLocation from a decoded FileId."""
+    if fid.file_type in PHOTO_TYPES:
+        return raw.types.InputPhotoFileLocation(
+            id=fid.media_id,
+            access_hash=fid.access_hash,
+            file_reference=fid.file_reference,
+            thumb_size=fid.thumbnail_size or "",
+        )
+    return raw.types.InputDocumentFileLocation(
+        id=fid.media_id,
+        access_hash=fid.access_hash,
+        file_reference=fid.file_reference,
+        thumb_size=fid.thumbnail_size or "",
+    )
+
+
+async def _get_media_session(client: Client, dc_id: int) -> Session:
+    """Return an active media session for *dc_id*, creating one if needed.
+
+    Re-uses Pyrogram's internal ``media_sessions`` dict so we don't
+    duplicate connections.
+    """
+    # Pyrogram 2.x keeps media sessions in client._media_sessions or
+    # client.media_sessions depending on the fork.  Try both.
+    sessions_dict: dict = getattr(
+        client, "media_sessions",
+        getattr(client, "_media_sessions", {}),
+    )
+
+    session = sessions_dict.get(dc_id)
+    if session is not None:
+        return session
+
+    my_dc = await client.storage.dc_id()
+
+    if dc_id == my_dc:
+        # Same DC – reuse the main session
+        session = client.session
+    else:
+        # Different DC – export authorization and open a new session
+        logger.debug(f"Creating media session for DC {dc_id}")
+        exported = await client.invoke(
+            raw.functions.auth.ExportAuthorization(dc_id=dc_id)
+        )
+        session = Session(
+            client, dc_id,
+            await client.storage.auth_key(),
+            await client.storage.test_mode(),
+        )
+        await session.start()
+        await session.invoke(
+            raw.functions.auth.ImportAuthorization(
+                id=exported.id,
+                bytes=exported.bytes,
+            )
+        )
+
+    sessions_dict[dc_id] = session
+    return session

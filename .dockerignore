@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+*.pyo
+.env
+sessions/*.session*
+media/
+.venv
+venv
+*.egg-info
+.git
+.gitignore
+*.md
