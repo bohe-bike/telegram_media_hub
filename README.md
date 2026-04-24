@@ -268,77 +268,33 @@ TG_NOTIFY_ON_FAIL=true
 
 ## 📁 目录结构
 
-g:\Projects\telegram_media_hub
-├── app/ # 应用代码
-│ ├── api/ # API 路由
-│ │ ├── **init**.py
-│ │ ├── auth.py # Telegram 认证 API
-│ │ ├── config.py # 配置管理 API
-│ │ └── tasks.py # 任务管理 API
-│ ├── core/ # 核心功能
-│ │ ├── **init**.py
-│ │ ├── database.py # 数据库连接和初始化
-│ │ └── redis.py # Redis 连接
-│ ├── models/ # 数据模型
-│ │ ├── **init**.py
-│ │ └── task.py # 任务模型（TaskModel）
-│ ├── schemas/ # Pydantic Schema
-│ │ ├── **init**.py
-│ │ └── task.py # 任务 Schema（TaskCreate, TaskResponse 等）
-│ ├── services/ # 业务逻辑层
-│ │ ├── **init**.py
-│ │ ├── telegram.py # Telegram 监听服务
-│ │ ├── tg_downloader.py # Telegram 媒体下载器
-│ │ ├── dispatcher.py # 消息分发器
-│ │ └── notifier.py # 通知服务
-│ ├── workers/ # RQ Worker 任务处理器
-│ │ ├── **init**.py
-│ │ ├── tg_worker.py # Telegram 下载 Worker
-│ │ ├── external_worker.py # 外链下载 Worker
-│ │ └── retry_handler.py # 任务重试处理
-│ ├── static/ # Web UI 静态文件
-│ │ └── index.html # Vue.js 前端入口
-│ ├── **init**.py
-│ └── main.py # FastAPI 应用入口
-├── config/ # 配置文件
-│ ├── **init**.py
-│ ├── .env.example # 环境变量模板
-│ └── settings.py # Settings 单例类
-├── alembic/ # 数据库迁移
-│ ├── env.py # Alembic 配置
-│ ├── script.py.mako # 迁移脚本模板
-│ └── versions/ # 迁移脚本（自动创建）
-├── doc/ # 文档
-│ ├── COMPLIANCE_CHECK.md # 合规性检查
-│ ├── DEPENDENCY_UPGRADE_GUIDE.md # 依赖升级指南
-│ ├── DEVELOPMENT_GUIDE.md # 开发环境指南
-│ ├── QUICK_START.md # 快速启动
-│ ├── TESTING_GUIDE.md # 测试运行指南
-│ ├── tg_media_hub_prd_architecture.md # 架构文档
-│ ├── TGCRYPTO_MISSING.md # tgcrypto 缺失解决方案
-│ └── UPGRADE_TEST_REPORT.md # 升级测试报告
-├── sessions/ # Pyrogram session 文件（自动创建，gitignore）
-├── media/ # 下载文件存储（自动创建，gitignore）
-│ ├── telegram/ # Telegram 媒体
-│ │ ├── video/
-│ │ ├── document/
-│ │ ├── photo/
-│ │ └── audio/
-│ ├── external/ # 外链下载
-│ │ ├── youtube/
-│ │ ├── tiktok/
-│ │ ├── bilibili/
-│ │ └── other/
-│ └── temp/ # 临时文件
-├── .qwen/ # Qwen Code 配置
-│ └── settings.json
-├── docker-compose.yml # Docker 编排配置
-├── Dockerfile # 应用镜像构建
-├── requirements.txt # Python 依赖
-├── alembic.ini # Alembic 配置
-├── .gitignore # Git 忽略配置
-├── .dockerignore # Docker 忽略配置
-└── README.md # 本文档
+```
+telegram_media_hub/
+├── app/              # 应用代码（API、服务、Worker）
+├── config/           # 配置文件（.env、settings）
+├── alembic/          # 数据库迁移
+├── doc/              # 项目文档
+├── sessions/         # Telegram Session（运行时生成）
+├── media/            # 下载文件存储（运行时生成）
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+└── README.md
+```
+
+**app 目录结构：**
+
+```
+app/
+├── api/              # API 路由（auth、config、tasks）
+├── core/             # 核心功能（database、redis）
+├── models/           # 数据模型
+├── schemas/          # Pydantic Schema
+├── services/         # 业务服务（Telegram、下载器、通知）
+├── workers/          # 后台 Worker（下载、重试）
+├── static/           # Web UI 静态文件
+└── main.py           # 应用入口
+```
 
 ---
 
