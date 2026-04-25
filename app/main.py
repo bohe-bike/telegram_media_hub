@@ -70,7 +70,12 @@ async def lifespan(app: FastAPI):
             f"{settings.tg_session_name}.session"
         if session_file.exists():
             try:
-                await tg_listener.start()
+                await asyncio.wait_for(tg_listener.start(), timeout=60)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "TG listener startup timed out (60s). "
+                    "Server will continue without it – check proxy/network."
+                )
             except Exception as e:
                 logger.error(f"Failed to start TG listener: {e}")
                 logger.warning(

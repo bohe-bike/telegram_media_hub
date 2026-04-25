@@ -137,6 +137,29 @@ class Settings(BaseSettings):
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    @property
+    def tg_proxy(self) -> dict | None:
+        """Return the first configured proxy as a Pyrogram-compatible dict.
+
+        Pyrogram expects: {"scheme": "http"/"socks5", "hostname": ..., "port": ...}
+        Returns None when no proxies are configured.
+        """
+        if not self.proxy_list:
+            return None
+        from urllib.parse import urlparse
+        url = self.proxy_list[0]
+        parsed = urlparse(url)
+        proxy: dict = {
+            "scheme": parsed.scheme,
+            "hostname": parsed.hostname,
+            "port": parsed.port,
+        }
+        if parsed.username:
+            proxy["username"] = parsed.username
+        if parsed.password:
+            proxy["password"] = parsed.password
+        return proxy
+
 
 def reload_settings() -> "Settings":
     """Re-read config.toml and replace the current settings instance.

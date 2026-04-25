@@ -53,6 +53,7 @@ async def get_worker_client() -> Client | None:
                 api_id=settings.tg_api_id,
                 api_hash=settings.tg_api_hash,
                 workdir=str(settings.session_dir),
+                proxy=settings.tg_proxy,
             )
             await _worker_client.start()
             logger.info("Shared worker Pyrogram client started.")

@@ -44,12 +44,16 @@ class TelegramListener:
 
     async def start(self):
         """Initialize and start the Telegram client."""
+        proxy = settings.tg_proxy
         self.client = Client(
             name=settings.tg_session_name,
             api_id=settings.tg_api_id,
             api_hash=settings.tg_api_hash,
             workdir=str(settings.session_dir),
+            proxy=proxy,
         )
+        if proxy:
+            logger.info(f"Telegram listener using proxy: {proxy['scheme']}://{proxy['hostname']}:{proxy['port']}")
         self.dispatcher = TaskDispatcher()
 
         self._register_handlers()
