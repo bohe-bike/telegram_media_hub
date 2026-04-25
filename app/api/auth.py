@@ -66,6 +66,7 @@ def _make_client() -> Client:
         phone_number=None,          # we handle auth manually
         workdir=str(settings.session_dir),
         in_memory=False,            # persist to file
+        proxy=settings.tg_proxy,
     )
 
 
@@ -81,11 +82,12 @@ async def auth_status():
     """Check whether a valid session already exists."""
     has_session = _session_file_exists()
 
-    # Quick probe: try to connect with existing session
+    # Quick probe: try to connect with existing session.
+    # Use a short timeout so a dead/incomplete session never hangs the UI.
     if has_session and not _state.logged_in:
         try:
             c = _make_client()
-            await c.start()
+            await asyncio.wait_for(c.start(), timeout=15)
             me = await c.get_me()
             await c.stop()
             _state.logged_in = True
@@ -100,6 +102,13 @@ async def auth_status():
                     "phone": me.phone_number or "",
                 },
             }
+        except asyncio.TimeoutError:
+            logger.warning("Session probe timed out – session may be invalid.")
+            _state.logged_in = False
+            # Remove the stale session file so Pyrogram won't prompt again
+            stale = settings.session_dir / f"{settings.tg_session_name}.session"
+            stale.unlink(missing_ok=True)
+            has_session = False
         except Exception as e:
             logger.debug(f"Session probe failed: {e}")
             _state.logged_in = False
