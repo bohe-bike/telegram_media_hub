@@ -80,9 +80,31 @@ def _session_file_exists() -> bool:
 @router.get("/status")
 async def auth_status():
     """Check whether a valid session already exists."""
+    from app.services.telegram import tg_listener
+
     has_session = _session_file_exists()
 
-    # Quick probe: try to connect with existing session.
+    # If the main listener is already running, read user info directly from it
+    # instead of opening a second Client (which would lock the SQLite session).
+    if tg_listener.is_running:
+        try:
+            me = await tg_listener.client.get_me()
+            _state.logged_in = True
+            return {
+                "logged_in": True,
+                "has_session": True,
+                "user": {
+                    "id": me.id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name or "",
+                    "username": me.username or "",
+                    "phone": me.phone_number or "",
+                },
+            }
+        except Exception as e:
+            logger.debug(f"get_me from listener failed: {e}")
+
+    # Listener not running – try a one-shot probe with a fresh client.
     # Use a short timeout so a dead/incomplete session never hangs the UI.
     if has_session and not _state.logged_in:
         try:

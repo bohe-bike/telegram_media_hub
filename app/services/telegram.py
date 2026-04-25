@@ -63,6 +63,16 @@ class TelegramListener:
         me = await self.client.get_me()
         logger.info(f"Logged in as {me.first_name} (ID: {me.id})")
 
+        # Export session string to Redis so worker processes can connect
+        # using in_memory=True, avoiding SQLite file-locking conflicts.
+        try:
+            from app.core.redis import redis_conn
+            session_str = await self.client.export_session_string()
+            redis_conn.set("tg:session_string", session_str)
+            logger.info("Session string exported to Redis for workers.")
+        except Exception as exc:
+            logger.warning(f"Could not export session string to Redis: {exc}")
+
     async def stop(self):
         """Stop the Telegram client."""
         if self.client:

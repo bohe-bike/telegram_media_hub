@@ -42,21 +42,40 @@ async def get_worker_client() -> Client | None:
     if not settings.tg_api_id or not settings.tg_api_hash:
         return None
 
-    session_file = settings.session_dir / f"{settings.tg_session_name}.session"
-    if not session_file.exists():
-        return None
+    # Prefer session string from Redis (in-memory, avoids SQLite file lock
+    # with the main listener process).  Fall back to session file if Redis
+    # key is not yet populated (e.g. listener hasn't started yet).
+    from app.core.redis import redis_conn
+    session_str: str | None = None
+    raw = redis_conn.get("tg:session_string")
+    if raw:
+        session_str = raw.decode() if isinstance(raw, bytes) else raw
+
+    if not session_str:
+        session_file = settings.session_dir / f"{settings.tg_session_name}.session"
+        if not session_file.exists():
+            return None
 
     async with _lock:
         if _worker_client is None:
-            _worker_client = Client(
-                name=settings.tg_session_name,
-                api_id=settings.tg_api_id,
-                api_hash=settings.tg_api_hash,
-                workdir=str(settings.session_dir),
-                proxy=settings.tg_proxy,
-            )
+            if session_str:
+                _worker_client = Client(
+                    name=":memory:",
+                    api_id=settings.tg_api_id,
+                    api_hash=settings.tg_api_hash,
+                    session_string=session_str,
+                    proxy=settings.tg_proxy,
+                )
+            else:
+                _worker_client = Client(
+                    name=settings.tg_session_name,
+                    api_id=settings.tg_api_id,
+                    api_hash=settings.tg_api_hash,
+                    workdir=str(settings.session_dir),
+                    proxy=settings.tg_proxy,
+                )
             await _worker_client.start()
-            logger.info("Shared worker Pyrogram client started.")
+            logger.info("Shared worker Pyrogram client started (in-memory session).")
         elif not _worker_client.is_connected:
             try:
                 await _worker_client.start()
