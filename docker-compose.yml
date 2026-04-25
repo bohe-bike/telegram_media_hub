@@ -3,7 +3,8 @@ services:
   # FastAPI app + Telegram listener
   # ==========================================
   app:
-    image: sbkdockerhub/telegram_media_hub:latest
+    build: .
+    image: telegram_media_hub:local
     container_name: media-hub-app
     restart: unless-stopped
     user: "0"   # run as root so named volumes are always writable
@@ -23,7 +24,8 @@ services:
   # TG download worker
   # ==========================================
   tg-worker:
-    image: sbkdockerhub/telegram_media_hub:latest
+    build: .
+    image: telegram_media_hub:local
     container_name: media-hub-tg-worker
     restart: unless-stopped
     user: "0"   # run as root so named volumes are always writable
@@ -41,7 +43,8 @@ services:
   # External download worker (via MeTube)
   # ==========================================
   external-worker:
-    image: sbkdockerhub/telegram_media_hub:latest
+    build: .
+    image: telegram_media_hub:local
     container_name: media-hub-external-worker
     restart: unless-stopped
     volumes:

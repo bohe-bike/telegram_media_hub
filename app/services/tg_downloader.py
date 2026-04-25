@@ -20,7 +20,7 @@ from loguru import logger
 from pyrogram import Client, raw
 from pyrogram.errors import FloodWait
 from pyrogram.file_id import FileId, PHOTO_TYPES
-from pyrogram.session import Session
+from pyrogram.session import Auth, Session
 
 from app.core.settings import settings
 
@@ -238,18 +238,21 @@ async def _get_media_session(client: Client, dc_id: int) -> Session:
         # Same DC – reuse the main session
         session = client.session
     else:
-        # Different DC – export authorization and open a new session.
-        # Pass auth_key=None so Pyrogram performs DH key exchange with the
-        # target DC to obtain a fresh auth key.  Using the home DC's auth key
-        # would cause Telegram to return 404 (auth key not found).
+        # Different DC – perform DH key exchange for that DC, then import
+        # the user's authorization so the session is authenticated.
         logger.debug(f"Creating media session for DC {dc_id}")
         exported = await client.invoke(
             raw.functions.auth.ExportAuthorization(dc_id=dc_id)
         )
+        test_mode = await client.storage.test_mode()
+        # Generate a fresh auth key for the target DC via MTProto DH exchange.
+        # We must NOT reuse the home DC's auth key – each DC keeps its own.
+        auth_key = await Auth(client, dc_id, test_mode).create()
         session = Session(
             client, dc_id,
-            None,   # generate new auth key via DH for this DC
-            await client.storage.test_mode(),
+            auth_key,
+            test_mode,
+            is_media=True,
         )
         await session.start()
         await session.invoke(
