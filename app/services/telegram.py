@@ -12,6 +12,28 @@ from app.core.settings import settings
 from app.services.dispatcher import TaskDispatcher
 
 
+def _is_auth_key_error(exc: BaseException) -> bool:
+    """Return True if *exc* indicates the session's auth key is no longer valid."""
+    msg = str(exc).lower()
+    return "auth key" in msg or "transport error: 404" in msg
+
+
+def _clear_session() -> None:
+    """Delete the stale .session file and remove the Redis session string."""
+    try:
+        session_file = settings.session_dir / f"{settings.tg_session_name}.session"
+        session_file.unlink(missing_ok=True)
+        logger.info("Stale session file removed.")
+    except Exception:
+        pass
+    try:
+        from app.core.redis import redis_conn
+        redis_conn.delete("tg:session_string")
+        logger.info("Redis session string cleared.")
+    except Exception:
+        pass
+
+
 def _cache_peer(message: Message) -> None:
     """Store the chat's access_hash in Redis so workers can send notifications
     without needing a local peer cache (in-memory sessions lack one)."""
@@ -114,7 +136,13 @@ class TelegramListener:
         self._register_handlers()
 
         logger.info("Starting Telegram listener...")
-        await self.client.start()
+        try:
+            await self.client.start()
+        except Exception as e:
+            if _is_auth_key_error(e):
+                logger.error(f"Auth key invalid – clearing stale session: {e}")
+                _clear_session()
+            raise
         me = await self.client.get_me()
         logger.info(f"Logged in as {me.first_name} (ID: {me.id})")
 

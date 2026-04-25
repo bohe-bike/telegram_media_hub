@@ -81,7 +81,16 @@ async def get_worker_client() -> Client | None:
                 await _worker_client.start()
                 logger.info("Shared worker Pyrogram client reconnected.")
             except Exception as exc:
-                logger.warning(f"Failed to reconnect worker client: {exc}")
+                _is_auth = "auth key" in str(exc).lower() or "transport error: 404" in str(exc).lower()
+                if _is_auth:
+                    logger.error(f"Worker client auth key invalid, clearing session: {exc}")
+                    try:
+                        from app.core.redis import redis_conn as _rc
+                        _rc.delete("tg:session_string")
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Failed to reconnect worker client: {exc}")
                 _worker_client = None
                 return None
 

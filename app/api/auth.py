@@ -132,8 +132,19 @@ async def auth_status():
             stale.unlink(missing_ok=True)
             has_session = False
         except Exception as e:
-            logger.debug(f"Session probe failed: {e}")
             _state.logged_in = False
+            if "auth key" in str(e).lower() or "transport error: 404" in str(e).lower():
+                logger.warning(f"Session probe failed (auth key invalid): {e}")
+                stale = settings.session_dir / f"{settings.tg_session_name}.session"
+                stale.unlink(missing_ok=True)
+                has_session = False
+                try:
+                    from app.core.redis import redis_conn as _rc
+                    _rc.delete("tg:session_string")
+                except Exception:
+                    pass
+            else:
+                logger.debug(f"Session probe failed: {e}")
 
     return {
         "logged_in": _state.logged_in,
