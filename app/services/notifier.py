@@ -47,11 +47,10 @@ async def notify_complete(
         return
 
     text = (
-        f"**Download Complete**\n"
-        f"File: `{file_name or 'unknown'}`\n"
-        f"Size: {_fmt_bytes(file_size)}\n"
-        f"Speed: {_fmt_speed(speed)}\n"
-        f"Path: `{local_path or '--'}`"
+        f"\u2705 下载完成\n"
+        f"文件：{file_name or 'unknown'}\n"
+        f"大小：{_fmt_bytes(file_size)}\n"
+        f"速度：{_fmt_speed(speed)}"
     )
     await _send_reply(chat_id, message_id, text)
 
@@ -71,15 +70,15 @@ async def notify_failed(
         return
 
     if retry_count < max_retries:
-        status = f"Retrying ({retry_count}/{max_retries})..."
+        status = f"重试中 ({retry_count}/{max_retries})..."
     else:
-        status = "All retries exhausted"
+        status = "已耗尽所有重试次数"
 
     text = (
-        f"**Download Failed**\n"
-        f"File: `{file_name or 'unknown'}`\n"
-        f"Error: `{(error or 'unknown')[:200]}`\n"
-        f"Status: {status}"
+        f"\u274c 下载失败\n"
+        f"文件：{file_name or 'unknown'}\n"
+        f"错误：{(error or 'unknown')[:200]}\n"
+        f"状态：{status}"
     )
     await _send_reply(chat_id, message_id, text)
 
