@@ -238,14 +238,17 @@ async def _get_media_session(client: Client, dc_id: int) -> Session:
         # Same DC – reuse the main session
         session = client.session
     else:
-        # Different DC – export authorization and open a new session
+        # Different DC – export authorization and open a new session.
+        # Pass auth_key=None so Pyrogram performs DH key exchange with the
+        # target DC to obtain a fresh auth key.  Using the home DC's auth key
+        # would cause Telegram to return 404 (auth key not found).
         logger.debug(f"Creating media session for DC {dc_id}")
         exported = await client.invoke(
             raw.functions.auth.ExportAuthorization(dc_id=dc_id)
         )
         session = Session(
             client, dc_id,
-            await client.storage.auth_key(),
+            None,   # generate new auth key via DH for this DC
             await client.storage.test_mode(),
         )
         await session.start()
