@@ -18,8 +18,8 @@ from app.core.tg_client import get_worker_client
 from app.models.task import SourceType, Task, TaskStatus
 from app.services.notifier import notify_complete, notify_failed
 from app.services.tg_downloader import download_tg_file
+from app.core.settings import settings
 from app.workers.retry_handler import schedule_retry
-from config.settings import settings
 
 
 async def _do_download(task_id: int):

@@ -9,7 +9,7 @@ from __future__ import annotations
 from loguru import logger
 
 from app.core.tg_client import get_worker_client
-from config.settings import settings
+from app.core.settings import settings
 
 
 def _fmt_bytes(b: int | None) -> str:

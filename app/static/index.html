@@ -1470,7 +1470,7 @@
             else body[k] = v;
           }
           await api("PUT", "/api/config/", body);
-          showAlert("#cfg-alert", "ok", "配置已保存，重启服务后生效。");
+          showAlert("#cfg-alert", "ok", "配置已保存，TG 监听器将自动启动（如已登录）。");
         } catch (e) {
           showAlert("#cfg-alert", "err", "保存失败：" + e.message);
         }

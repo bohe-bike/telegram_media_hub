@@ -8,7 +8,7 @@ from loguru import logger
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-from config.settings import settings
+from app.core.settings import settings
 from app.services.dispatcher import TaskDispatcher
 
 # URL regex pattern for extracting links from messages
@@ -36,6 +36,11 @@ class TelegramListener:
     def __init__(self):
         self.client: Optional[Client] = None
         self.dispatcher: Optional[TaskDispatcher] = None
+
+    @property
+    def is_running(self) -> bool:
+        """Return True if the underlying Pyrogram client is connected."""
+        return self.client is not None and self.client.is_connected
 
     async def start(self):
         """Initialize and start the Telegram client."""
@@ -189,3 +194,7 @@ class TelegramListener:
                 chat_id=message.chat.id,
                 message_id=message.id,
             )
+
+
+# Module-level singleton — shared by lifespan (main.py) and config API
+tg_listener = TelegramListener()

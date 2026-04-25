@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from rq import Worker
 
 from app.core.redis import external_download_queue, redis_conn, retry_queue, tg_download_queue
-from config.settings import settings
+from app.core.settings import settings
 
 router = APIRouter(tags=["status"])
 

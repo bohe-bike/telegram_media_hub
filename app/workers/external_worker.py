@@ -20,8 +20,8 @@ from sqlalchemy import update
 from app.core.database import async_session_factory
 from app.models.task import Task, TaskStatus
 from app.services.notifier import notify_complete, notify_failed
+from app.core.settings import settings
 from app.workers.retry_handler import schedule_retry
-from config.settings import settings
 
 # Security: only allow http/https; block private/loopback addresses
 _ALLOWED_SCHEMES = {"http", "https"}

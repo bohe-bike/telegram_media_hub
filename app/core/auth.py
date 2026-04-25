@@ -9,7 +9,7 @@ setup mode). Once a key is configured, all protected API routes require the head
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 
-from config.settings import settings
+from app.core.settings import settings
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 

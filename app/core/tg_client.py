@@ -25,7 +25,7 @@ import asyncio
 from loguru import logger
 from pyrogram import Client
 
-from config.settings import settings
+from app.core.settings import settings
 
 _worker_client: Client | None = None
 _lock = asyncio.Lock()

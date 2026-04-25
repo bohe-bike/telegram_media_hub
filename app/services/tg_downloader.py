@@ -22,7 +22,7 @@ from pyrogram.errors import FloodWait
 from pyrogram.file_id import FileId, PHOTO_TYPES
 from pyrogram.session import Session
 
-from config.settings import settings
+from app.core.settings import settings
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB – Telegram maximum per GetFile call
 

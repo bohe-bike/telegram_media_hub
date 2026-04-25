@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 import httpx
 
-from config.settings import CONFIG_DIR, TOML_FILE, reload_settings, settings
+from app.core.settings import CONFIG_DIR, TOML_FILE, reload_settings, settings
+from app.services.telegram import tg_listener
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -174,6 +175,22 @@ async def save_config(body: ConfigData):
     _write_toml(toml_map)
     reload_settings()
     logger.info("Configuration saved to config.toml and reloaded.")
+
+    # Auto-start TG listener if credentials are now configured and session exists
+    if settings.tg_api_id and settings.tg_api_hash and not tg_listener.is_running:
+        session_file = settings.session_dir / f"{settings.tg_session_name}.session"
+        if session_file.exists():
+            try:
+                await tg_listener.start()
+                logger.info("TG listener auto-started after config save.")
+            except Exception as e:
+                logger.error(f"Failed to auto-start TG listener: {e}")
+        else:
+            logger.info(
+                "TG credentials set but no session file found. "
+                "Please go to TG Login tab to sign in."
+            )
+
     return {"message": "Configuration saved", "toml_path": str(TOML_FILE)}
 
 

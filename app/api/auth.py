@@ -23,7 +23,7 @@ from pyrogram.errors import (
     SessionPasswordNeeded,
 )
 
-from config.settings import settings
+from app.core.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

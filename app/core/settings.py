@@ -5,8 +5,11 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
-# Fixed config directory; config.toml and sessions live here
-CONFIG_DIR = Path(__file__).resolve().parent
+# Config directory is the top-level "config/" folder at the repository root.
+# In Docker: /app/config; locally: <project>/config.
+# Since this file lives in app/core/, we compute the root as two levels up.
+APP_ROOT = Path(__file__).resolve().parent.parent.parent
+CONFIG_DIR = APP_ROOT / "config"
 TOML_FILE = CONFIG_DIR / "config.toml"
 
 
@@ -136,11 +139,39 @@ class Settings(BaseSettings):
 
 
 def reload_settings() -> "Settings":
-    """Re-read config.toml and return a fresh Settings instance."""
-    global settings
-    settings = Settings()
-    return settings
+    """Re-read config.toml and replace the current settings instance.
+
+    Modules that imported ``settings`` get a proxy reference, so the new
+    values are immediately visible everywhere — no restart needed.
+    """
+    settings._replace(Settings())
+    return settings._instance  # type: ignore[attr-defined]
 
 
-settings = Settings()
+class _SettingsProxy:
+    """Module-level singleton that delegates to the current Settings instance.
 
+    ``reload_settings()`` swaps the internal instance; all ``from
+    app.core.settings import settings`` sites share this same proxy object,
+    so they always see the latest configuration.
+    """
+
+    __slots__ = ("_instance",)
+
+    def __init__(self, instance: Settings) -> None:
+        self._instance = instance
+
+    def _replace(self, instance: Settings) -> None:
+        self._instance = instance
+
+    def __getattr__(self, name: str):
+        return getattr(self._instance, name)
+
+    def __setattr__(self, name: str, value) -> None:
+        if name == "_instance":
+            super().__setattr__(name, value)
+        else:
+            setattr(self._instance, name, value)
+
+
+settings = _SettingsProxy(Settings())

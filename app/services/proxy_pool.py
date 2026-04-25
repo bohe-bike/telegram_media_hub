@@ -26,7 +26,7 @@ from sqlalchemy import select, update
 
 from app.core.database import async_session_factory
 from app.models.task import Proxy, ProxyStatus
-from config.settings import settings
+from app.core.settings import settings
 
 _HEALTH_CHECK_URL = "https://www.google.com/generate_204"
 _HEALTH_CHECK_TIMEOUT = 10  # seconds

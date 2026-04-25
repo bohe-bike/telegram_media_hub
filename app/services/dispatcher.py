@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.core.database import async_session_factory
 from app.core.redis import external_download_queue, tg_download_queue
 from app.models.task import SourceType, Task, TaskStatus
-from config.settings import settings
+from app.core.settings import settings
 
 
 class TaskDispatcher:

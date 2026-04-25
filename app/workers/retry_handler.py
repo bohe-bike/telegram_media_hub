@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
 from app.core.redis import external_download_queue, retry_queue, tg_download_queue
+from app.core.settings import settings
 from app.models.task import SourceType, Task, TaskStatus
-from config.settings import settings
 
 
 def get_retry_delay(retry_count: int) -> int:

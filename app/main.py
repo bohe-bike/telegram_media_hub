@@ -17,11 +17,9 @@ from app.api.tasks import router as tasks_router
 from app.core.auth import verify_api_key
 from app.core.database import init_db
 from app.services.proxy_pool import ProxyPool
-from app.services.telegram import TelegramListener
+from app.services.telegram import tg_listener
+from app.core.settings import settings
 from app.workers.retry_handler import recover_interrupted_tasks, recover_pending_tasks
-from config.settings import settings
-
-tg_listener = TelegramListener()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
