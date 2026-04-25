@@ -130,7 +130,10 @@ async def _parallel_stream(
     async def _fetch_chunk(idx: int) -> None:
         nonlocal downloaded_bytes
         offset = idx * CHUNK_SIZE
-        limit = min(CHUNK_SIZE, file_size - offset)
+        remaining = file_size - offset
+        # Telegram requires limit to be a multiple of 4096 and at most CHUNK_SIZE.
+        # Round up to the next 4096 boundary so the last chunk is always valid.
+        limit = min(CHUNK_SIZE, ((remaining + 4095) // 4096) * 4096)
 
         for attempt in range(5):
             try:

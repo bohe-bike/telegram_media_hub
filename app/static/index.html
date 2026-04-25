@@ -323,6 +323,26 @@
         background: #f9731620;
         color: #f97316;
       }
+
+      /* progress bar */
+      .prog-wrap {
+        height: 4px;
+        background: var(--bg3);
+        border-radius: 2px;
+        margin-top: 4px;
+        overflow: hidden;
+      }
+      .prog-bar {
+        height: 100%;
+        background: var(--accent);
+        border-radius: 2px;
+        transition: width .4s linear;
+      }
+      .prog-text {
+        font-size: .72rem;
+        color: var(--text2);
+        margin-top: 2px;
+      }
       .empty {
         text-align: center;
         color: var(--text3);
@@ -884,15 +904,7 @@
                 <div class="hint">0 = 关闭自动健康检查</div>
               </div>
             </div>
-            <button
-              type="button"
-              class="btn btn-outline"
-              id="btn-proxy-test"
-              style="margin-top: 2px"
-            >
-              测试代理
-            </button>
-            <div id="proxy-results" class="proxy-results"></div>
+            <div class="hint" style="margin-top:6px">保存后，前往 <a href="#" onclick="switchTab('pane-proxies');return false" style="color:var(--accent)">代理标签页</a> 点击"从设置同步"导入，并运行健康检查。</div>
           </div>
 
           <div class="card">
@@ -1483,50 +1495,6 @@
         loadConfig();
       });
 
-      /* ========== PROXY TEST ========== */
-      $("#btn-proxy-test").addEventListener("click", async () => {
-        const raw = $('[name="proxy_pool"]').value.trim();
-        if (!raw) {
-          showAlert("#cfg-alert", "warn", "请先在上方输入至少一个代理地址。");
-          return;
-        }
-
-        const proxies = raw
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        const container = $("#proxy-results");
-        const btn = $("#btn-proxy-test");
-
-        // Show waiting state for each proxy
-        container.innerHTML = proxies
-          .map(
-            (p) =>
-              `<div class="proxy-row"><span class="dot wait"></span><span class="url">${p}</span><span class="lat">测试中...</span></div>`,
-          )
-          .join("");
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spin"></span> 测试中...';
-
-        try {
-          const results = await api("POST", "/api/config/proxy-test", {
-            proxies,
-          });
-          container.innerHTML = results
-            .map((r) => {
-              if (r.ok) {
-                return `<div class="proxy-row"><span class="dot ok"></span><span class="url">${r.proxy}</span><span class="lat">${r.latency_ms} ms</span></div>`;
-              }
-              return `<div class="proxy-row"><span class="dot fail"></span><span class="url">${r.proxy}</span><span class="err" title="${r.error || ""}">${r.error || "失败"}</span><span class="lat">${r.latency_ms != null ? r.latency_ms + " ms" : "--"}</span></div>`;
-            })
-            .join("");
-        } catch (e) {
-          container.innerHTML = `<div class="proxy-row"><span class="dot fail"></span><span class="url">Error</span><span class="err">${e.message}</span></div>`;
-        }
-        btn.disabled = false;
-        btn.textContent = "测试代理";
-      });
-
       /* ========== AUTH ========== */
       let authPhone = "";
 
@@ -1671,6 +1639,15 @@
 
       /* ========== TASKS ========== */
       let _tasksAutoRefresh = null;
+      let _tasksRefreshInterval = 15000;
+
+      function _taskProgressHtml(t) {
+        if (t.status !== "downloading" || !t.file_size) return "";
+        const pct = Math.min(100, Math.round((t.downloaded_size || 0) * 100 / t.file_size));
+        const speed = t.speed ? (t.speed >= 1048576 ? (t.speed / 1048576).toFixed(1) + " MB/s" : (t.speed / 1024).toFixed(0) + " KB/s") : "";
+        return `<div class="prog-wrap"><div class="prog-bar" style="width:${pct}%"></div></div>
+                <div class="prog-text">${pct}%${speed ? " · " + speed : ""} · ${fmtBytes(t.downloaded_size)} / ${fmtBytes(t.file_size)}</div>`;
+      }
 
       async function loadTasks() {
         const filter = $("#task-filter").value;
@@ -1684,13 +1661,25 @@
             $("#task-stats").textContent = "";
             return;
           }
+          const hasDownloading = d.tasks.some(t => t.status === "downloading");
+          const targetInterval = hasDownloading ? 3000 : 15000;
+          if (targetInterval !== _tasksRefreshInterval) {
+            _tasksRefreshInterval = targetInterval;
+            if (_tasksAutoRefresh) {
+              clearInterval(_tasksAutoRefresh);
+              _tasksAutoRefresh = setInterval(loadTasks, _tasksRefreshInterval);
+            }
+          }
           tbody.innerHTML = d.tasks
             .map(
               (t) => `
       <tr>
         <td>${t.id}</td>
         <td style="color:var(--text2)">${t.source_type}</td>
-        <td title="${t.source_url || t.file_name || ""}">${truncate(t.source_url || t.file_name, 36)}</td>
+        <td title="${t.source_url || t.file_name || ""}">
+          ${truncate(t.source_url || t.file_name, 36)}
+          ${_taskProgressHtml(t)}
+        </td>
         <td><span class="status ${t.status}">${t.status}</span></td>
         <td>${fmtBytes(t.file_size)}</td>
         <td style="color:var(--text3)">${fmtTime(t.created_at)}</td>
@@ -1861,7 +1850,7 @@
       const _tasksObserver = new MutationObserver(() => {
         const active = $("#pane-tasks").classList.contains("active");
         if (active && !_tasksAutoRefresh) {
-          _tasksAutoRefresh = setInterval(loadTasks, 15000);
+          _tasksAutoRefresh = setInterval(loadTasks, _tasksRefreshInterval);
         } else if (!active && _tasksAutoRefresh) {
           clearInterval(_tasksAutoRefresh);
           _tasksAutoRefresh = null;

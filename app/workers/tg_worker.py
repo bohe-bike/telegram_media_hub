@@ -21,6 +21,10 @@ from app.services.tg_downloader import download_tg_file
 from app.core.settings import settings
 from app.workers.retry_handler import schedule_retry
 
+# Per-task throttle state for progress callbacks (task_id -> timestamp/start)
+_progress_ts: dict[int, float] = {}
+_progress_start: dict[int, float] = {}
+
 
 async def _do_download(task_id: int):
     """Actual async download logic for TG media."""
@@ -73,6 +77,8 @@ async def _do_download(task_id: int):
             raise RuntimeError("No Pyrogram client available – session missing or not configured")
 
         start_time = time.time()
+        _progress_start[task_id] = start_time
+        _progress_ts[task_id] = 0.0
 
         # Use parallel downloader (auto-fallback for small files)
         await download_tg_file(
@@ -85,6 +91,8 @@ async def _do_download(task_id: int):
         )
 
         elapsed = time.time() - start_time
+        _progress_ts.pop(task_id, None)
+        _progress_start.pop(task_id, None)
 
         # Move temp -> final
         if temp_file.exists():
@@ -128,9 +136,9 @@ async def _do_download(task_id: int):
     except Exception as e:
         logger.error(f"Task #{task_id} failed: {e}")
 
-        # Clean up temp
-        if temp_file.exists():
-            temp_file.unlink(missing_ok=True)
+        # Clean up temp files (.tmp from parallel, .tmp.temp from Pyrogram single-stream)
+        temp_file.unlink(missing_ok=True)
+        Path(str(temp_file) + ".temp").unlink(missing_ok=True)
 
         # Schedule retry & persist error
         async with async_session_factory() as session:
@@ -151,15 +159,31 @@ async def _do_download(task_id: int):
 
 
 def _progress_callback(task_id: int, current: int, total: int):
-    """Log download progress at every 10 % milestone."""
-    if total > 0:
-        pct = current * 100 / total
-        # Use rounding to avoid logging the same milestone multiple times
-        # as floating-point values straddle the integer boundary.
-        milestone = round(pct / 10) * 10
-        prev_milestone = round((current - 1) * 100 / total / 10) * 10
-        if milestone != prev_milestone and milestone % 10 == 0:
-            logger.debug(f"Task #{task_id}: {milestone}% ({current}/{total})")
+    """Write download progress to DB (throttled to at most once per 3 s)."""
+    now = time.time()
+    last = _progress_ts.get(task_id, 0.0)
+    if now - last < 3.0:
+        return
+    _progress_ts[task_id] = now
+
+    elapsed = now - _progress_start.get(task_id, now)
+    speed = current / elapsed if elapsed > 0 else 0.0
+
+    async def _write():
+        async with async_session_factory() as session:
+            await session.execute(
+                update(Task)
+                .where(Task.id == task_id)
+                .values(downloaded_size=current, speed=speed)
+            )
+            await session.commit()
+
+    # Schedule the coroutine on the running event loop (we are inside it).
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(_write())
+    except Exception:
+        pass
 
 
 def download_tg_media(task_id: int):
