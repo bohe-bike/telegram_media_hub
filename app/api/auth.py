@@ -10,6 +10,7 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -26,6 +27,11 @@ from pyrogram.errors import (
 from app.core.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _is_auth_key_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "auth key" in msg or "transport error: 404" in msg or "auth_key_duplicated" in msg
 
 # ---------- in-memory auth state (single-user, single-login at a time) ---
 
@@ -58,9 +64,9 @@ class TwoFAReq(BaseModel):
 
 # ---------- helpers -------------------------------------------------------
 
-def _make_client() -> Client:
+def _make_auth_client() -> Client:
     return Client(
-        name=settings.tg_session_name,
+        name=f"{settings.tg_session_name}_auth",
         api_id=settings.tg_api_id,
         api_hash=settings.tg_api_hash,
         phone_number=None,          # we handle auth manually
@@ -70,9 +76,43 @@ def _make_client() -> Client:
     )
 
 
+def _make_main_session_client() -> Client:
+    return Client(
+        name=settings.tg_session_name,
+        api_id=settings.tg_api_id,
+        api_hash=settings.tg_api_hash,
+        phone_number=None,
+        workdir=str(settings.session_dir),
+        in_memory=False,
+        proxy=settings.tg_proxy,
+    )
+
+
 def _session_file_exists() -> bool:
     p = settings.session_dir / f"{settings.tg_session_name}.session"
     return p.exists()
+
+
+def _main_session_file():
+    return settings.session_dir / f"{settings.tg_session_name}.session"
+
+
+def _auth_session_file():
+    return settings.session_dir / f"{settings.tg_session_name}_auth.session"
+
+
+def _clear_session_files() -> None:
+    _main_session_file().unlink(missing_ok=True)
+    _auth_session_file().unlink(missing_ok=True)
+
+
+async def _promote_auth_session() -> None:
+    """Replace main session with the successful auth-flow session atomically."""
+    auth_file = _auth_session_file()
+    if not auth_file.exists():
+        raise HTTPException(500, "Login succeeded but auth session file was not found")
+    _main_session_file().unlink(missing_ok=True)
+    auth_file.replace(_main_session_file())
 
 
 # ---------- routes --------------------------------------------------------
@@ -103,12 +143,31 @@ async def auth_status():
             }
         except Exception as e:
             logger.debug(f"get_me from listener failed: {e}")
+            if _is_auth_key_error(e):
+                logger.warning("Listener session became invalid (AUTH_KEY_DUPLICATED), clearing session.")
+                try:
+                    await tg_listener.stop()
+                except Exception:
+                    pass
+                _clear_session_files()
+                try:
+                    from app.core.redis import redis_conn as _rc
+                    _rc.delete("tg:session_string")
+                except Exception:
+                    pass
+                _state.logged_in = False
+                return {
+                    "logged_in": False,
+                    "has_session": False,
+                    "needs_2fa": False,
+                    "user": None,
+                }
 
     # Listener not running – try a one-shot probe with a fresh client.
     # Use a short timeout so a dead/incomplete session never hangs the UI.
     if has_session and not _state.logged_in:
         try:
-            c = _make_client()
+            c = _make_main_session_client()
             await asyncio.wait_for(c.start(), timeout=15)
             me = await c.get_me()
             await c.stop()
@@ -128,15 +187,13 @@ async def auth_status():
             logger.warning("Session probe timed out – session may be invalid.")
             _state.logged_in = False
             # Remove the stale session file so Pyrogram won't prompt again
-            stale = settings.session_dir / f"{settings.tg_session_name}.session"
-            stale.unlink(missing_ok=True)
+            _main_session_file().unlink(missing_ok=True)
             has_session = False
         except Exception as e:
             _state.logged_in = False
-            if "auth key" in str(e).lower() or "transport error: 404" in str(e).lower():
+            if _is_auth_key_error(e):
                 logger.warning(f"Session probe failed (auth key invalid): {e}")
-                stale = settings.session_dir / f"{settings.tg_session_name}.session"
-                stale.unlink(missing_ok=True)
+                _main_session_file().unlink(missing_ok=True)
                 has_session = False
                 try:
                     from app.core.redis import redis_conn as _rc
@@ -172,8 +229,17 @@ async def send_code(body: SendCodeReq):
         except Exception:
             pass
 
-    client = _make_client()
-    await client.connect()
+    # Always start a fresh auth-flow session file for this login attempt.
+    _auth_session_file().unlink(missing_ok=True)
+
+    client = _make_auth_client()
+    try:
+        await client.connect()
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            409,
+            "Telegram session database is locked. Please retry in a few seconds.",
+        ) from e
 
     try:
         sent = await client.send_code(phone)
@@ -224,6 +290,18 @@ async def sign_in(body: SignInReq):
     me = await _state.client.get_me()
     await _state.client.disconnect()
 
+    await _promote_auth_session()
+
+    # Refresh listener with the newly logged-in session so auth/status and
+    # incoming task listening recover immediately.
+    from app.services.telegram import tg_listener
+    try:
+        if tg_listener.is_running:
+            await tg_listener.stop()
+        await asyncio.wait_for(tg_listener.start(), timeout=60)
+    except Exception as exc:
+        logger.warning(f"Listener restart after login failed: {exc}")
+
     _state.logged_in = True
     _state.client = None
     _state.phone_code_hash = ""
@@ -264,6 +342,16 @@ async def sign_in_2fa(body: TwoFAReq):
     me = await _state.client.get_me()
     await _state.client.disconnect()
 
+    await _promote_auth_session()
+
+    from app.services.telegram import tg_listener
+    try:
+        if tg_listener.is_running:
+            await tg_listener.stop()
+        await asyncio.wait_for(tg_listener.start(), timeout=60)
+    except Exception as exc:
+        logger.warning(f"Listener restart after 2FA login failed: {exc}")
+
     _state.logged_in = True
     _state.needs_2fa = False
     _state.client = None
@@ -292,11 +380,14 @@ async def logout():
             pass
         _state.client = None
 
-    # Remove session file
-    session_file = settings.session_dir / f"{settings.tg_session_name}.session"
-    if session_file.exists():
-        session_file.unlink()
-        logger.info(f"Session file removed: {session_file}")
+    _clear_session_files()
+    logger.info("Session files removed.")
+
+    try:
+        from app.core.redis import redis_conn as _rc
+        _rc.delete("tg:session_string")
+    except Exception:
+        pass
 
     _state.logged_in = False
     _state.needs_2fa = False
