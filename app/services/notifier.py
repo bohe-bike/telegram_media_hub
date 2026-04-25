@@ -98,6 +98,21 @@ async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
             reply_to_message_id=message_id,
         )
     except Exception as e:
+        err_str = str(e)
+        # In-memory session has an empty peer cache; resolve the peer and retry once.
+        if "PEER_ID_INVALID" in err_str:
+            try:
+                await client.get_chat(chat_id)
+                await client.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_to_message_id=message_id,
+                )
+                return
+            except Exception as retry_e:
+                logger.warning(
+                    f"Failed to send TG notification to chat {chat_id} after peer resolve: {retry_e}")
+                return
         # Notification failure should never crash the worker
         logger.warning(
             f"Failed to send TG notification to chat {chat_id}: {e}")

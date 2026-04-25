@@ -6,6 +6,7 @@ services:
     image: sbkdockerhub/telegram_media_hub:latest
     container_name: media-hub-app
     restart: unless-stopped
+    user: "0"   # run as root so named volumes are always writable
     ports:
       - "8000:8000"
     volumes:
@@ -25,6 +26,7 @@ services:
     image: sbkdockerhub/telegram_media_hub:latest
     container_name: media-hub-tg-worker
     restart: unless-stopped
+    user: "0"   # run as root so named volumes are always writable
     volumes:
       - ./config:/app/config
       - media_data:/media
