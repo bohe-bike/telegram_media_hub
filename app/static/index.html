@@ -1134,20 +1134,9 @@
 
       <!-- ===================== TASKS PANE ===================== -->
       <div id="pane-tasks" class="pane">
-        <div
-          style="
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 16px;
-          "
-        >
-          <div style="display: flex; gap: 8px; align-items: center">
-            <select
-              id="task-filter"
-              class="btn btn-outline"
-              style="padding: 7px 12px; font-size: 0.85rem"
-            >
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="task-filter" class="btn btn-outline" style="padding:7px 12px;font-size:.85rem">
               <option value="">全部状态</option>
               <option value="pending">待处理</option>
               <option value="downloading">下载中</option>
@@ -1155,44 +1144,37 @@
               <option value="failed">失败</option>
               <option value="retrying">重试中</option>
             </select>
+            <select id="task-page-size" class="btn btn-outline" style="padding:7px 12px;font-size:.85rem">
+              <option value="20">20 条/页</option>
+              <option value="50" selected>50 条/页</option>
+              <option value="100">100 条/页</option>
+            </select>
           </div>
-          <button
-            class="btn btn-outline"
-            id="btn-refresh-tasks"
-            style="font-size: 0.85rem"
-          >
-            刷新
-          </button>
+          <button class="btn btn-outline" id="btn-refresh-tasks" style="font-size:.85rem">刷新</button>
         </div>
-        <div class="card" style="padding: 0; overflow-x: auto">
+        <div class="card" style="padding:0;overflow-x:auto">
           <table class="tbl">
             <thead>
               <tr>
-                <th>#</th>
-                <th>类型</th>
-                <th>来源</th>
-                <th>状态</th>
-                <th>大小</th>
-                <th>时间</th>
-                <th>操作</th>
+                <th>#</th><th>类型</th><th>来源</th><th>状态</th><th>大小</th><th>时间</th><th>操作</th>
               </tr>
             </thead>
             <tbody id="task-tbody">
-              <tr>
-                <td colspan="7" class="empty">加载中...</td>
-              </tr>
+              <tr><td colspan="7" class="empty">加载中...</td></tr>
             </tbody>
           </table>
         </div>
-        <div
-          id="task-stats"
-          style="
-            color: var(--text3);
-            font-size: 0.8rem;
-            text-align: right;
-            margin-top: 6px;
-          "
-        ></div>
+        <!-- pagination -->
+        <div id="task-pagination" style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;flex-wrap:wrap;gap:8px">
+          <div id="task-stats" style="color:var(--text3);font-size:.8rem"></div>
+          <div style="display:flex;gap:4px;align-items:center">
+            <button class="btn btn-outline" id="btn-page-first" style="padding:4px 10px;font-size:.82rem" onclick="gotoPage(0)">«</button>
+            <button class="btn btn-outline" id="btn-page-prev"  style="padding:4px 10px;font-size:.82rem" onclick="gotoPage(_taskPage-1)">‹</button>
+            <span id="task-page-info" style="color:var(--text2);font-size:.82rem;min-width:80px;text-align:center"></span>
+            <button class="btn btn-outline" id="btn-page-next"  style="padding:4px 10px;font-size:.82rem" onclick="gotoPage(_taskPage+1)">›</button>
+            <button class="btn btn-outline" id="btn-page-last"  style="padding:4px 10px;font-size:.82rem" onclick="gotoPage(_taskTotalPages-1)">»</button>
+          </div>
+        </div>
       </div>
     </div>
     <!-- /shell -->
@@ -1640,6 +1622,26 @@
       /* ========== TASKS ========== */
       let _tasksAutoRefresh = null;
       let _tasksRefreshInterval = 15000;
+      let _taskPage = 0;
+      let _taskTotalPages = 1;
+
+      function gotoPage(p) {
+        p = Math.max(0, Math.min(p, _taskTotalPages - 1));
+        if (p === _taskPage && _taskTotalPages > 0) return;
+        _taskPage = p;
+        loadTasks();
+      }
+
+      function _updatePagination(total, limit) {
+        _taskTotalPages = Math.max(1, Math.ceil(total / limit));
+        const cur = _taskPage + 1;
+        $("#task-page-info").textContent = `第 ${cur} / ${_taskTotalPages} 页`;
+        $("#task-stats").textContent = `共 ${total} 条`;
+        $("#btn-page-first").disabled = _taskPage === 0;
+        $("#btn-page-prev").disabled  = _taskPage === 0;
+        $("#btn-page-next").disabled  = _taskPage >= _taskTotalPages - 1;
+        $("#btn-page-last").disabled  = _taskPage >= _taskTotalPages - 1;
+      }
 
       function _taskProgressHtml(t) {
         if (t.status !== "downloading" || !t.file_size) return "";
@@ -1651,14 +1653,16 @@
 
       async function loadTasks() {
         const filter = $("#task-filter").value;
-        const qs = filter ? "?status=" + filter : "";
+        const limit = parseInt($("#task-page-size").value) || 50;
+        const offset = _taskPage * limit;
+        let qs = `?limit=${limit}&offset=${offset}`;
+        if (filter) qs += `&status=${filter}`;
         try {
           const d = await api("GET", "/api/tasks/" + qs);
           const tbody = $("#task-tbody");
           if (!d.tasks || d.tasks.length === 0) {
-            tbody.innerHTML =
-              '<tr><td colspan="7" class="empty">暂无任务</td></tr>';
-            $("#task-stats").textContent = "";
+            tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无任务</td></tr>';
+            _updatePagination(d.total || 0, limit);
             return;
           }
           const hasDownloading = d.tasks.some(t => t.status === "downloading");
@@ -1670,9 +1674,7 @@
               _tasksAutoRefresh = setInterval(loadTasks, _tasksRefreshInterval);
             }
           }
-          tbody.innerHTML = d.tasks
-            .map(
-              (t) => `
+          tbody.innerHTML = d.tasks.map((t) => `
       <tr>
         <td>${t.id}</td>
         <td style="color:var(--text2)">${t.source_type}</td>
@@ -1687,11 +1689,8 @@
           ${t.status === "failed" || t.status === "cancelled" ? `<button class="btn btn-outline" style="padding:3px 10px;font-size:.75rem" onclick="retryTask(${t.id})">重试</button>` : ""}
           <button class="btn btn-outline" style="padding:3px 8px;font-size:.75rem;color:var(--red)" onclick="deleteTask(${t.id})" title="删除任务">✕</button>
         </td>
-      </tr>
-    `,
-            )
-            .join("");
-          $("#task-stats").textContent = `共 ${d.total} 条`;
+      </tr>`).join("");
+          _updatePagination(d.total, limit);
         } catch (e) {
           $("#task-tbody").innerHTML =
             `<tr><td colspan="7" class="empty" style="color:var(--red)">Error: ${e.message}</td></tr>`;
@@ -1718,7 +1717,8 @@
       }
 
       $("#btn-refresh-tasks").addEventListener("click", loadTasks);
-      $("#task-filter").addEventListener("change", loadTasks);
+      $("#task-filter").addEventListener("change", () => { _taskPage = 0; loadTasks(); });
+      $("#task-page-size").addEventListener("change", () => { _taskPage = 0; loadTasks(); });
 
       /* ========== PROXIES ========== */
       const PROXY_STATUS_COLOR = {

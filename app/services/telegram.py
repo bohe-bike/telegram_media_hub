@@ -11,6 +11,61 @@ from pyrogram.types import Message
 from app.core.settings import settings
 from app.services.dispatcher import TaskDispatcher
 
+
+def _cache_peer(message: Message) -> None:
+    """Store the chat's access_hash in Redis so workers can send notifications
+    without needing a local peer cache (in-memory sessions lack one)."""
+    async def _do():
+        try:
+            from app.core.redis import redis_conn
+            peer = await message._client.resolve_peer(message.chat.id)  # type: ignore[attr-defined]
+            if hasattr(peer, 'access_hash'):
+                redis_conn.set(f"tg:peer_hash:{message.chat.id}", str(peer.access_hash))
+                redis_conn.set(f"tg:peer_type:{message.chat.id}", type(peer).__name__)
+        except Exception:
+            pass
+    import asyncio
+    asyncio.ensure_future(_do())
+
+
+# ------------------------------------------------------------------
+# Enqueue batch notifier
+# ------------------------------------------------------------------
+# Per-chat accumulator: chat_id -> {"names": [...], "first_msg_id": int, "timer": Task}
+_enqueue_batches: dict[int, dict] = {}
+
+
+def _notify_enqueued(chat_id: int, first_msg_id: int, name: str, client: "Client") -> None:
+    """Add *name* to the per-chat batch and (re)start the 5-second flush timer."""
+    batch = _enqueue_batches.get(chat_id)
+    if batch is None:
+        batch = {"names": [], "first_msg_id": first_msg_id, "timer": None}
+        _enqueue_batches[chat_id] = batch
+    batch["names"].append(name)
+
+    # Cancel existing timer and restart
+    if batch["timer"] and not batch["timer"].done():
+        batch["timer"].cancel()
+    batch["timer"] = asyncio.ensure_future(_flush_enqueue_batch(chat_id, client))
+
+
+async def _flush_enqueue_batch(chat_id: int, client: "Client") -> None:
+    await asyncio.sleep(5)
+    batch = _enqueue_batches.pop(chat_id, None)
+    if not batch:
+        return
+    names: list[str] = batch["names"]
+    msg_id: int = batch["first_msg_id"]
+    if len(names) == 1:
+        text = f"⏳ {names[0]} 已加入队列"
+    else:
+        first = names[0]
+        text = f"⏳ {first} 等 {len(names)} 个任务已加入队列"
+    try:
+        await client.send_message(chat_id=chat_id, text=text, reply_to_message_id=msg_id)
+    except Exception as e:
+        logger.warning(f"Failed to send enqueue notification to {chat_id}: {e}")
+
 # URL regex pattern for extracting links from messages
 URL_PATTERN = re.compile(
     r'https?://(?:www\.)?'
@@ -92,64 +147,70 @@ class TelegramListener:
 
         @self.client.on_message(chat_filter & filters.video)
         async def handle_video(client: Client, message: Message):
+            _cache_peer(message)
             await self._handle_tg_video(message)
 
         @self.client.on_message(chat_filter & filters.document)
         async def handle_document(client: Client, message: Message):
+            _cache_peer(message)
             await self._handle_tg_document(message)
 
         @self.client.on_message(chat_filter & filters.photo)
         async def handle_photo(client: Client, message: Message):
+            _cache_peer(message)
             await self._handle_tg_photo(message)
 
         @self.client.on_message(chat_filter & filters.audio)
         async def handle_audio(client: Client, message: Message):
+            _cache_peer(message)
             await self._handle_tg_audio(message)
 
         @self.client.on_message(chat_filter & (filters.text | filters.caption))
         async def handle_text(client: Client, message: Message):
+            _cache_peer(message)
             await self._handle_text_message(message)
 
     async def _handle_tg_video(self, message: Message):
         """Handle Telegram native video messages."""
         video = message.video
+        file_name = video.file_name or f"video_{message.id}.mp4"
         logger.info(
             f"Received TG video from chat {message.chat.id}: "
-            f"{video.file_name or 'unnamed'} ({video.file_size} bytes)"
+            f"{file_name} ({video.file_size} bytes)"
         )
         await self.dispatcher.create_tg_download_task(
             source_type="tg_video",
             file_id=video.file_id,
-            file_name=video.file_name or f"video_{message.id}.mp4",
+            file_name=file_name,
             file_size=video.file_size,
             chat_id=message.chat.id,
             message_id=message.id,
         )
+        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
 
     async def _handle_tg_document(self, message: Message):
         """Handle Telegram document messages."""
         doc = message.document
+        file_name = doc.file_name or f"doc_{message.id}"
         logger.info(
             f"Received TG document from chat {message.chat.id}: "
-            f"{doc.file_name or 'unnamed'} ({doc.file_size} bytes)"
+            f"{file_name} ({doc.file_size} bytes)"
         )
         await self.dispatcher.create_tg_download_task(
             source_type="tg_document",
             file_id=doc.file_id,
-            file_name=doc.file_name or f"doc_{message.id}",
+            file_name=file_name,
             file_size=doc.file_size,
             chat_id=message.chat.id,
             message_id=message.id,
         )
+        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
 
     async def _handle_tg_photo(self, message: Message):
         """Handle Telegram photo messages."""
         photo = message.photo
-        # message.photo is already the highest-resolution Photo object;
-        # file_size may be None for very old photos.
         file_size = photo.file_size or 0
         file_name = f"photo_{message.id}.jpg"
-
         logger.info(
             f"Received TG photo from chat {message.chat.id}: "
             f"{file_name} ({file_size} bytes)"
@@ -162,23 +223,25 @@ class TelegramListener:
             chat_id=message.chat.id,
             message_id=message.id,
         )
+        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
 
     async def _handle_tg_audio(self, message: Message):
         """Handle Telegram audio messages."""
         audio = message.audio
+        file_name = audio.file_name or f"audio_{message.id}.mp3"
         logger.info(
             f"Received TG audio from chat {message.chat.id}: "
-            f"{audio.file_name or audio.title or 'unnamed'} "
-            f"({audio.file_size} bytes, {audio.duration}s)"
+            f"{file_name} ({audio.file_size} bytes, {audio.duration}s)"
         )
         await self.dispatcher.create_tg_download_task(
             source_type="tg_audio",
             file_id=audio.file_id,
-            file_name=audio.file_name or f"audio_{message.id}.mp3",
+            file_name=file_name,
             file_size=audio.file_size,
             chat_id=message.chat.id,
             message_id=message.id,
         )
+        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
 
     async def _handle_text_message(self, message: Message):
         """Handle text messages, extract URLs for external download.
@@ -208,6 +271,7 @@ class TelegramListener:
                 chat_id=message.chat.id,
                 message_id=message.id,
             )
+            _notify_enqueued(message.chat.id, message.id, url, self.client)
 
 
 # Module-level singleton — shared by lifespan (main.py) and config API
