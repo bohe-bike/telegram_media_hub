@@ -147,6 +147,24 @@ async def _do_download(task_id: int):
         start_time = time.time()
         _progress_start[task_id] = start_time
         _progress_ts[task_id] = 0.0
+        refreshed_reference = False
+
+        # Historical tasks may have stale metadata (file_size=0 / expired file_id).
+        # Refresh once up front so single-stream downloads don't silently create
+        # an empty temp file before we ever see an exception.
+        if file_size <= 0 and chat_id and message_id:
+            file_id, file_name, refreshed_size = await _refresh_media_reference(
+                client=client,
+                task_id=task_id,
+                source_type=SourceType(source_type),
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+            final_file = target_dir / file_name
+            temp_file = temp_dir / f"{file_name}.tmp"
+            if refreshed_size > 0:
+                file_size = refreshed_size
+            refreshed_reference = True
 
         # Use parallel downloader (auto-fallback for small files)
         try:
@@ -164,6 +182,44 @@ async def _do_download(task_id: int):
 
             logger.warning(
                 f"Task #{task_id}: file reference expired, refreshing from origin message and retrying once"
+            )
+            temp_file.unlink(missing_ok=True)
+            Path(str(temp_file) + ".temp").unlink(missing_ok=True)
+
+            file_id, file_name, refreshed_size = await _refresh_media_reference(
+                client=client,
+                task_id=task_id,
+                source_type=SourceType(source_type),
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+            final_file = target_dir / file_name
+            temp_file = temp_dir / f"{file_name}.tmp"
+            if refreshed_size > 0:
+                file_size = refreshed_size
+            refreshed_reference = True
+
+            await download_tg_file(
+                client=client,
+                file_id_str=file_id,
+                file_size=file_size,
+                dest_path=temp_file,
+                progress=lambda cur, tot: _progress_callback(
+                    task_id, cur, tot),
+            )
+
+        # Pyrogram single-stream can sometimes swallow FILE_REFERENCE_EXPIRED,
+        # log a traceback, and leave behind a 0-byte temp file. Treat that as
+        # a stale reference and do one explicit refresh + retry here.
+        if (
+            temp_file.exists()
+            and temp_file.stat().st_size <= 0
+            and not refreshed_reference
+            and chat_id
+            and message_id
+        ):
+            logger.warning(
+                f"Task #{task_id}: temp file is empty after download attempt, refreshing origin message and retrying once"
             )
             temp_file.unlink(missing_ok=True)
             Path(str(temp_file) + ".temp").unlink(missing_ok=True)

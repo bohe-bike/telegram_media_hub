@@ -6,7 +6,12 @@ so the user gets instant feedback without checking the Web UI.
 
 from __future__ import annotations
 
+import random
+
 from loguru import logger
+from pyrogram import raw
+from pyrogram.utils import get_channel_id
+
 from app.core.tg_client import get_worker_client
 from app.core.settings import settings
 
@@ -89,6 +94,25 @@ async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
         logger.debug("No TG client available – skipping notification")
         return
 
+    peer = _build_peer(chat_id)
+
+    if peer is not None:
+        try:
+            await client.invoke(
+                raw.functions.messages.SendMessage(
+                    peer=peer,
+                    message=text,
+                    random_id=random.getrandbits(63),
+                    no_webpage=True,
+                    reply_to_msg_id=message_id,
+                )
+            )
+            return
+        except Exception as e:
+            logger.debug(
+                f"Raw peer send failed for chat {chat_id}, falling back to send_message: {e}"
+            )
+
     async def _do_send(target):
         await client.send_message(
             chat_id=target,
@@ -108,3 +132,33 @@ async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
                 f"Failed to send TG notification to chat {chat_id} after peer resolve: {retry_e}"
             )
         logger.warning(f"Failed to send TG notification to chat {chat_id}: {e}")
+
+
+def _build_peer(chat_id: int):
+    """Construct a raw InputPeer from Redis-cached metadata, or None."""
+    try:
+        from app.core.redis import redis_conn
+
+        raw_hash = redis_conn.get(f"tg:peer_hash:{chat_id}")
+        peer_type = redis_conn.get(f"tg:peer_type:{chat_id}")
+        pt = peer_type.decode() if isinstance(peer_type, bytes) else (peer_type or "")
+
+        if "Chat" in pt and "Channel" not in pt:
+            return raw.types.InputPeerChat(chat_id=abs(int(chat_id)))
+
+        if not raw_hash:
+            return None
+
+        access_hash = int(raw_hash)
+        if "Channel" in pt:
+            return raw.types.InputPeerChannel(
+                channel_id=get_channel_id(int(chat_id)),
+                access_hash=access_hash,
+            )
+
+        return raw.types.InputPeerUser(
+            user_id=abs(int(chat_id)),
+            access_hash=access_hash,
+        )
+    except Exception:
+        return None
