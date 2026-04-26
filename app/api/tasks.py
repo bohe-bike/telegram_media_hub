@@ -1,5 +1,6 @@
 """FastAPI REST API routes for task management."""
 
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +13,7 @@ from app.core.redis import external_download_queue, redis_conn, retry_queue, tg_
 from app.models.task import SourceType, Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskListResponse, TaskResponse, TaskRetryResponse
 from app.services.dispatcher import TaskDispatcher
+from app.workers.retry_handler import schedule_retry
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 dispatcher = TaskDispatcher()
@@ -112,6 +114,72 @@ async def retry_task(
         status=task.status,
         message="Task has been re-queued for retry",
     )
+
+
+@router.post("/revalidate-completed")
+async def revalidate_completed_tasks(
+    session: AsyncSession = Depends(get_session),
+):
+    """Re-validate completed tasks and requeue invalid ones.
+
+    This is a manual consistency check endpoint intended for the Tasks page
+    button. It scans COMPLETED tasks and for each task verifies:
+      - local_path exists
+      - file exists on disk
+      - file size > 0
+    Invalid tasks are passed through the existing retry scheduler.
+    """
+    result = await session.execute(
+        select(Task).where(Task.status == TaskStatus.COMPLETED)
+    )
+    tasks = result.scalars().all()
+
+    scanned = 0
+    healthy = 0
+    requeued = 0
+    marked_failed = 0
+
+    for task in tasks:
+        scanned += 1
+        local_path = (task.local_path or "").strip()
+
+        invalid_reason: str | None = None
+        actual_size = 0
+
+        if not local_path:
+            invalid_reason = "completed task has empty local_path"
+        elif not os.path.exists(local_path):
+            invalid_reason = f"completed file is missing: {local_path}"
+        else:
+            actual_size = os.path.getsize(local_path)
+            if actual_size <= 0:
+                invalid_reason = f"completed file is empty (0 bytes): {local_path}"
+
+        if invalid_reason:
+            task.error_message = f"Revalidation failed: {invalid_reason}"
+            schedule_retry(session, task)
+            if task.status == TaskStatus.RETRYING:
+                requeued += 1
+            elif task.status == TaskStatus.FAILED:
+                marked_failed += 1
+            continue
+
+        # Keep metadata consistent for historical tasks.
+        if actual_size > 0 and (task.file_size != actual_size or task.downloaded_size != actual_size):
+            task.file_size = actual_size
+            task.downloaded_size = actual_size
+
+        healthy += 1
+
+    await session.commit()
+
+    return {
+        "message": "Completed task revalidation finished",
+        "scanned": scanned,
+        "healthy": healthy,
+        "requeued": requeued,
+        "marked_failed": marked_failed,
+    }
 
 
 @router.delete("/{task_id}", status_code=204)

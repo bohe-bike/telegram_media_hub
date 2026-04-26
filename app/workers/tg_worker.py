@@ -101,6 +101,12 @@ async def _do_download(task_id: int):
             raise RuntimeError("Downloaded temp file not found")
 
         actual_size = os.path.getsize(str(final_file))
+        if actual_size <= 0:
+            raise RuntimeError("Downloaded file is empty (0 bytes)")
+        if file_size > 0 and actual_size != file_size:
+            raise RuntimeError(
+                f"Downloaded file size mismatch: expected {file_size}, got {actual_size}"
+            )
         speed = actual_size / elapsed if elapsed > 0 else 0
 
         # ---- mark completed -----------------------------------------
@@ -136,9 +142,13 @@ async def _do_download(task_id: int):
     except Exception as e:
         logger.error(f"Task #{task_id} failed: {e}")
 
+        _progress_ts.pop(task_id, None)
+        _progress_start.pop(task_id, None)
+
         # Clean up temp files (.tmp from parallel, .tmp.temp from Pyrogram single-stream)
         temp_file.unlink(missing_ok=True)
         Path(str(temp_file) + ".temp").unlink(missing_ok=True)
+        final_file.unlink(missing_ok=True)
 
         # Schedule retry & persist error
         async with async_session_factory() as session:

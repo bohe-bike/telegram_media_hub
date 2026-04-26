@@ -180,14 +180,26 @@ async def _do_download(task_id: int) -> None:
             else ""
         )
 
-        if local_path and not os.path.exists(local_path):
-            logger.warning(
-                f"Task #{task_id}: expected file not found at {local_path!r}"
-            )
-            local_path = ""
+        if not local_path:
+            raise RuntimeError("MeTube reported completion but filename/path is missing")
 
-        if not file_size and local_path and os.path.exists(local_path):
-            file_size = os.path.getsize(local_path)
+        if not os.path.exists(local_path):
+            raise RuntimeError(
+                f"MeTube reported completion but file not found: {local_path}"
+            )
+
+        actual_size = os.path.getsize(local_path)
+        if actual_size <= 0:
+            raise RuntimeError(
+                f"MeTube reported completion but output file is empty: {local_path}"
+            )
+
+        if file_size and file_size != actual_size:
+            logger.warning(
+                f"Task #{task_id}: MeTube reported size {file_size}, actual size {actual_size}; using actual size."
+            )
+
+        file_size = actual_size
 
         async with async_session_factory() as session:
             await session.execute(

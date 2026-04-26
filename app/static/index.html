@@ -1150,7 +1150,11 @@
               <option value="100">100 条/页</option>
             </select>
           </div>
-          <button class="btn btn-outline" id="btn-refresh-tasks" style="font-size:.85rem">刷新</button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span id="task-revalidate-result" style="font-size:.78rem;color:var(--text3)"></span>
+            <button class="btn btn-outline" id="btn-revalidate-tasks" style="font-size:.85rem">二次校验</button>
+            <button class="btn btn-outline" id="btn-refresh-tasks" style="font-size:.85rem">刷新</button>
+          </div>
         </div>
         <div class="card" style="padding:0;overflow-x:auto">
           <table class="tbl">
@@ -1716,7 +1720,29 @@
         }
       }
 
+      async function revalidateCompletedTasks() {
+        const btn = $("#btn-revalidate-tasks");
+        const msg = $("#task-revalidate-result");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin"></span> 校验中...';
+        msg.style.color = "var(--text3)";
+        msg.textContent = "正在校验已完成任务...";
+        try {
+          const r = await api("POST", "/api/tasks/revalidate-completed");
+          msg.style.color = "var(--green)";
+          msg.textContent = `已校验 ${r.scanned} 条，正常 ${r.healthy}，重试 ${r.requeued}，失败 ${r.marked_failed}`;
+          await loadTasks();
+        } catch (e) {
+          msg.style.color = "var(--red)";
+          msg.textContent = "二次校验失败：" + e.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "二次校验";
+        }
+      }
+
       $("#btn-refresh-tasks").addEventListener("click", loadTasks);
+      $("#btn-revalidate-tasks").addEventListener("click", revalidateCompletedTasks);
       $("#task-filter").addEventListener("change", () => { _taskPage = 0; loadTasks(); });
       $("#task-page-size").addEventListener("change", () => { _taskPage = 0; loadTasks(); });
 
