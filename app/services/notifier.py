@@ -7,8 +7,6 @@ so the user gets instant feedback without checking the Web UI.
 from __future__ import annotations
 
 from loguru import logger
-from pyrogram import raw
-
 from app.core.tg_client import get_worker_client
 from app.core.settings import settings
 
@@ -91,10 +89,6 @@ async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
         logger.debug("No TG client available – skipping notification")
         return
 
-    # Build a raw InputPeer from cached access_hash so in-memory sessions
-    # (which lack a peer cache) can still send messages.
-    peer = _build_peer(chat_id)
-
     async def _do_send(target):
         await client.send_message(
             chat_id=target,
@@ -103,35 +97,14 @@ async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
         )
 
     try:
-        await _do_send(peer if peer else chat_id)
+        await _do_send(chat_id)
     except Exception as e:
-        err_str = str(e)
-        if "PEER_ID_INVALID" in err_str:
-            # Peer not cached yet – try to resolve it then retry once
-            try:
-                await client.get_chat(chat_id)
-                await _do_send(chat_id)
-                return
-            except Exception as retry_e:
-                logger.warning(
-                    f"Failed to send TG notification to chat {chat_id} after peer resolve: {retry_e}")
-                return
+        try:
+            await client.get_chat(chat_id)
+            await _do_send(chat_id)
+            return
+        except Exception as retry_e:
+            logger.warning(
+                f"Failed to send TG notification to chat {chat_id} after peer resolve: {retry_e}"
+            )
         logger.warning(f"Failed to send TG notification to chat {chat_id}: {e}")
-
-
-def _build_peer(chat_id: int):
-    """Construct a raw InputPeer from Redis-cached access_hash, or None."""
-    try:
-        from app.core.redis import redis_conn
-        raw_hash = redis_conn.get(f"tg:peer_hash:{chat_id}")
-        peer_type = redis_conn.get(f"tg:peer_type:{chat_id}")
-        if not raw_hash:
-            return None
-        access_hash = int(raw_hash)
-        pt = peer_type.decode() if isinstance(peer_type, bytes) else (peer_type or "")
-        if "Channel" in pt:
-            return raw.types.InputPeerChannel(channel_id=chat_id, access_hash=access_hash)
-        # Default: user
-        return raw.types.InputPeerUser(user_id=chat_id, access_hash=access_hash)
-    except Exception:
-        return None

@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from loguru import logger
+from pyrogram.types import Message
 from sqlalchemy import update
 
 from app.core.database import async_session_factory
@@ -24,6 +25,73 @@ from app.workers.retry_handler import schedule_retry
 # Per-task throttle state for progress callbacks (task_id -> timestamp/start)
 _progress_ts: dict[int, float] = {}
 _progress_start: dict[int, float] = {}
+
+
+def _is_file_reference_expired(exc: BaseException) -> bool:
+    return "file_reference_expired" in str(exc).lower()
+
+
+async def _load_origin_message(client, chat_id: int, message_id: int) -> Message:
+    """Fetch the original message so we can obtain a fresh media file_id."""
+    try:
+        msg = await client.get_messages(chat_id, message_id)
+        if msg:
+            return msg
+    except Exception:
+        pass
+
+    # In-memory worker sessions may miss peer cache; warm it once, then retry.
+    await client.get_chat(chat_id)
+    msg = await client.get_messages(chat_id, message_id)
+    if not msg:
+        raise RuntimeError(
+            f"Could not fetch origin message {message_id} from chat {chat_id}"
+        )
+    return msg
+
+
+def _extract_media_from_message(message: Message, source_type: SourceType) -> tuple[str, str, int]:
+    if source_type == SourceType.TG_VIDEO and message.video:
+        media = message.video
+        return media.file_id, (media.file_name or f"video_{message.id}.mp4"), (media.file_size or 0)
+    if source_type == SourceType.TG_DOCUMENT and message.document:
+        media = message.document
+        return media.file_id, (media.file_name or f"doc_{message.id}"), (media.file_size or 0)
+    if source_type == SourceType.TG_PHOTO and message.photo:
+        media = message.photo
+        return media.file_id, f"photo_{message.id}.jpg", (media.file_size or 0)
+    if source_type == SourceType.TG_AUDIO and message.audio:
+        media = message.audio
+        return media.file_id, (media.file_name or f"audio_{message.id}.mp3"), (media.file_size or 0)
+    raise RuntimeError(
+        f"Origin message {message.id} no longer contains expected media for {source_type.value}"
+    )
+
+
+async def _refresh_media_reference(
+    client,
+    task_id: int,
+    source_type: SourceType,
+    chat_id: int,
+    message_id: int,
+) -> tuple[str, str, int]:
+    """Refresh expired TG file references from the original message."""
+    message = await _load_origin_message(client, chat_id, message_id)
+    fresh_file_id, fresh_file_name, fresh_file_size = _extract_media_from_message(message, source_type)
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        if task:
+            task.telegram_file_id = fresh_file_id
+            task.file_name = fresh_file_name
+            if fresh_file_size > 0:
+                task.file_size = fresh_file_size
+            await session.commit()
+
+    logger.info(
+        f"Task #{task_id}: refreshed expired file reference from origin message {message_id}"
+    )
+    return fresh_file_id, fresh_file_name, fresh_file_size
 
 
 async def _do_download(task_id: int):
@@ -81,14 +149,45 @@ async def _do_download(task_id: int):
         _progress_ts[task_id] = 0.0
 
         # Use parallel downloader (auto-fallback for small files)
-        await download_tg_file(
-            client=client,
-            file_id_str=file_id,
-            file_size=file_size,
-            dest_path=temp_file,
-            progress=lambda cur, tot: _progress_callback(
-                task_id, cur, tot),
-        )
+        try:
+            await download_tg_file(
+                client=client,
+                file_id_str=file_id,
+                file_size=file_size,
+                dest_path=temp_file,
+                progress=lambda cur, tot: _progress_callback(
+                    task_id, cur, tot),
+            )
+        except Exception as exc:
+            if not _is_file_reference_expired(exc):
+                raise
+
+            logger.warning(
+                f"Task #{task_id}: file reference expired, refreshing from origin message and retrying once"
+            )
+            temp_file.unlink(missing_ok=True)
+            Path(str(temp_file) + ".temp").unlink(missing_ok=True)
+
+            file_id, file_name, refreshed_size = await _refresh_media_reference(
+                client=client,
+                task_id=task_id,
+                source_type=SourceType(source_type),
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+            final_file = target_dir / file_name
+            temp_file = temp_dir / f"{file_name}.tmp"
+            if refreshed_size > 0:
+                file_size = refreshed_size
+
+            await download_tg_file(
+                client=client,
+                file_id_str=file_id,
+                file_size=file_size,
+                dest_path=temp_file,
+                progress=lambda cur, tot: _progress_callback(
+                    task_id, cur, tot),
+            )
 
         elapsed = time.time() - start_time
         _progress_ts.pop(task_id, None)
