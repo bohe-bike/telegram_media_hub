@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 
 from loguru import logger
-from pyrogram import Client
+from pyrogram import Client, raw
 
 from app.core.settings import settings
 
@@ -47,9 +47,9 @@ async def get_worker_client() -> Client | None:
     # key is not yet populated (e.g. listener hasn't started yet).
     from app.core.redis import redis_conn
     session_str: str | None = None
-    raw = redis_conn.get("tg:session_string")
-    if raw:
-        session_str = raw.decode() if isinstance(raw, bytes) else raw
+    raw_val = redis_conn.get("tg:session_string")
+    if raw_val:
+        session_str = raw_val.decode() if isinstance(raw_val, bytes) else raw_val
 
     if not session_str:
         session_file = settings.session_dir / f"{settings.tg_session_name}.session"
@@ -93,5 +93,22 @@ async def get_worker_client() -> Client | None:
                     logger.warning(f"Failed to reconnect worker client: {exc}")
                 _worker_client = None
                 return None
+        else:
+            # Connection appears up, but verify with a lightweight ping
+            # to catch silent disconnects (e.g. Telegram idle timeout).
+            try:
+                await asyncio.wait_for(
+                    _worker_client.invoke(raw.functions.Ping(ping=0)),
+                    timeout=5.0,
+                )
+            except Exception:
+                logger.debug("Main worker client ping failed, attempting reconnect")
+                try:
+                    await _worker_client.start()
+                    logger.info("Shared worker Pyrogram client reconnected after ping failure.")
+                except Exception as exc:
+                    logger.warning(f"Failed to reconnect worker client after ping: {exc}")
+                    _worker_client = None
+                    return None
 
     return _worker_client

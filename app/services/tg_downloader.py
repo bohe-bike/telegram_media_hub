@@ -111,7 +111,6 @@ async def _parallel_stream(
     dc_id = file_id.dc_id
 
     location = _build_location(file_id)
-    session = await _get_media_session(client, dc_id)
 
     total_chunks = (file_size + CHUNK_SIZE - 1) // CHUNK_SIZE
 
@@ -127,7 +126,12 @@ async def _parallel_stream(
     for i in range(total_chunks):
         chunk_queue.put_nowait(i)
 
-    async def _fetch_chunk(idx: int) -> None:
+    # Create a dedicated session for each worker to avoid AUTH_KEY_DUPLICATED
+    worker_sessions = await asyncio.gather(*[
+        _get_worker_session(client, dc_id) for _ in range(num_workers)
+    ])
+
+    async def _fetch_chunk(idx: int, sess: Session) -> None:
         nonlocal downloaded_bytes
         offset = idx * CHUNK_SIZE
         remaining = file_size - offset
@@ -137,7 +141,11 @@ async def _parallel_stream(
 
         for attempt in range(5):
             try:
-                resp = await session.invoke(
+                # Check session health before each attempt (handles idle disconnects)
+                if attempt > 0:
+                    sess = await _ensure_session_alive(sess, client, dc_id)
+
+                resp = await sess.invoke(
                     raw.functions.upload.GetFile(
                         location=location,
                         offset=offset,
@@ -173,16 +181,16 @@ async def _parallel_stream(
                 except Exception:
                     pass
 
-    async def _worker() -> None:
+    async def _worker(sess: Session) -> None:
         while True:
             try:
                 idx = chunk_queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
-            await _fetch_chunk(idx)
+            await _fetch_chunk(idx, sess)
             chunk_queue.task_done()
 
-    await asyncio.gather(*[_worker() for _ in range(num_workers)])
+    await asyncio.gather(*[_worker(s) for s in worker_sessions])
 
     # Verify file size
     actual = dest_path.stat().st_size
@@ -264,3 +272,64 @@ async def _get_media_session(client: Client, dc_id: int) -> Session:
 
     sessions_dict[dc_id] = session
     return session
+
+
+async def _get_worker_session(client: Client, dc_id: int) -> Session:
+    """Create a new dedicated session for a single worker.
+
+    Each worker needs its own auth key to avoid AUTH_KEY_DUPLICATED errors
+    when multiple workers invoke requests concurrently on the same DC.
+    """
+    my_dc = await client.storage.dc_id()
+
+    if dc_id == my_dc:
+        # For the home DC, we still need a separate auth key/session
+        test_mode = await client.storage.test_mode()
+        auth_key = await Auth(client, dc_id, test_mode).create()
+        session = Session(
+            client, dc_id,
+            auth_key,
+            test_mode,
+            is_media=True,
+        )
+        await session.start()
+    else:
+        # Different DC – export auth and create a new session
+        logger.debug(f"Creating dedicated worker session for DC {dc_id}")
+        exported = await client.invoke(
+            raw.functions.auth.ExportAuthorization(dc_id=dc_id)
+        )
+        test_mode = await client.storage.test_mode()
+        auth_key = await Auth(client, dc_id, test_mode).create()
+        session = Session(
+            client, dc_id,
+            auth_key,
+            test_mode,
+            is_media=True,
+        )
+        await session.start()
+        await session.invoke(
+            raw.functions.auth.ImportAuthorization(
+                id=exported.id,
+                bytes=exported.bytes,
+            )
+        )
+
+    return session
+
+
+async def _ensure_session_alive(session: Session, client: Client, dc_id: int) -> Session:
+    """Check if a worker session is still alive; recreate if disconnected.
+
+    Returns a valid, connected session (either the original or a new one).
+    """
+    try:
+        # Try a lightweight ping to check if the session is still responsive
+        await session.invoke(
+            raw.functions.Ping(ping=0)
+        )
+        return session
+    except Exception:
+        logger.debug(f"Worker session for DC {dc_id} appears disconnected, recreating")
+        # Session is dead – create a fresh one
+        return await _get_worker_session(client, dc_id)
