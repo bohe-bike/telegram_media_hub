@@ -90,8 +90,11 @@ async def recover_interrupted_tasks():
             f"Recovering {len(interrupted_tasks)} interrupted tasks...")
 
         for task in interrupted_tasks:
+            # Don't increment retry_count on crash recovery — the retry
+            # budget should only be consumed by actual failed attempts,
+            # not by container restarts (which could loop many times
+            # in a row during early deployment).
             task.status = TaskStatus.RETRYING
-            task.retry_count += 1
             task.error_message = "Recovered after service restart"
 
             if task.source_type == SourceType.EXTERNAL_LINK:

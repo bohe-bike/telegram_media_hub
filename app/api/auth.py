@@ -24,6 +24,7 @@ from pyrogram.errors import (
     SessionPasswordNeeded,
 )
 
+from app.core.tg_client import export_session_to_redis
 from app.core.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -295,12 +296,26 @@ async def sign_in(body: SignInReq):
     # Refresh listener with the newly logged-in session so auth/status and
     # incoming task listening recover immediately.
     from app.services.telegram import tg_listener
+    listener_started_ok = False
     try:
         if tg_listener.is_running:
             await tg_listener.stop()
         await asyncio.wait_for(tg_listener.start(), timeout=60)
+        listener_started_ok = True
     except Exception as exc:
         logger.warning(f"Listener restart after login failed: {exc}")
+
+    # Ensure the session string is in Redis even if listener restart failed.
+    # Use a temporary client to export if needed.
+    if not listener_started_ok:
+        try:
+            c = _make_main_session_client()
+            await asyncio.wait_for(c.start(), timeout=15)
+            await export_session_to_redis(c)
+            await c.stop()
+            logger.info("Session string exported to Redis via fallback client after login.")
+        except Exception as exc:
+            logger.warning(f"Fallback session export after login failed: {exc}")
 
     _state.logged_in = True
     _state.client = None
@@ -345,12 +360,25 @@ async def sign_in_2fa(body: TwoFAReq):
     await _promote_auth_session()
 
     from app.services.telegram import tg_listener
+    listener_started_ok = False
     try:
         if tg_listener.is_running:
             await tg_listener.stop()
         await asyncio.wait_for(tg_listener.start(), timeout=60)
+        listener_started_ok = True
     except Exception as exc:
         logger.warning(f"Listener restart after 2FA login failed: {exc}")
+
+    # Ensure the session string is in Redis even if listener restart failed.
+    if not listener_started_ok:
+        try:
+            c = _make_main_session_client()
+            await asyncio.wait_for(c.start(), timeout=15)
+            await export_session_to_redis(c)
+            await c.stop()
+            logger.info("Session string exported to Redis via fallback client after 2FA login.")
+        except Exception as exc:
+            logger.warning(f"Fallback session export after 2FA login failed: {exc}")
 
     _state.logged_in = True
     _state.needs_2fa = False

@@ -42,6 +42,8 @@ class ConfigData(BaseModel):
     tg_parallel_threshold: int = 10
     tg_notify_on_complete: bool = True
     tg_notify_on_fail: bool = True
+    tg_notify_mode: str = "user"
+    tg_bot_token: str = ""
     api_secret_key: str = ""
     proxy_fail_threshold: int = 3
     proxy_check_interval: int = 300
@@ -80,7 +82,10 @@ _SECTION_ORDER: list[tuple[str, list[str]]] = [
     ("TG 并行下载", [
         "tg_parallel_connections", "tg_parallel_threshold",
     ]),
-    ("Notifications", ["tg_notify_on_complete", "tg_notify_on_fail"]),
+    ("Notifications", [
+        "tg_notify_on_complete", "tg_notify_on_fail",
+        "tg_notify_mode", "tg_bot_token",
+    ]),
     ("Security", ["api_secret_key"]),
 ]
 
@@ -138,6 +143,8 @@ async def get_config():
         tg_parallel_threshold=settings.tg_parallel_threshold,
         tg_notify_on_complete=settings.tg_notify_on_complete,
         tg_notify_on_fail=settings.tg_notify_on_fail,
+        tg_notify_mode=settings.tg_notify_mode,
+        tg_bot_token=settings.tg_bot_token,
         api_secret_key=settings.api_secret_key,
         proxy_fail_threshold=settings.proxy_fail_threshold,
         proxy_check_interval=settings.proxy_check_interval,
@@ -169,6 +176,8 @@ async def save_config(body: ConfigData):
         "tg_parallel_threshold": body.tg_parallel_threshold,
         "tg_notify_on_complete": body.tg_notify_on_complete,
         "tg_notify_on_fail": body.tg_notify_on_fail,
+        "tg_notify_mode": body.tg_notify_mode,
+        "tg_bot_token": body.tg_bot_token,
         "api_secret_key": body.api_secret_key,
     }
 

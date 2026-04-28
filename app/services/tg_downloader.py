@@ -190,7 +190,18 @@ async def _parallel_stream(
             await _fetch_chunk(idx, sess)
             chunk_queue.task_done()
 
-    await asyncio.gather(*[_worker(s) for s in worker_sessions])
+    try:
+        await asyncio.gather(*[_worker(s) for s in worker_sessions])
+    finally:
+        # Clean up all temporary worker sessions to prevent TCP connection
+        # & auth-key leaks.  The home DC session (client.session) is NOT
+        # closed here — only the ad-hoc sessions created for parallelism.
+        for sess in worker_sessions:
+            if sess is not client.session:
+                try:
+                    await sess.stop()
+                except Exception:
+                    pass
 
     # Verify file size
     actual = dest_path.stat().st_size

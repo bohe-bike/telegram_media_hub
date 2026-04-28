@@ -8,8 +8,10 @@ from loguru import logger
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
+from app.core.tg_client import export_session_to_redis
 from app.core.settings import settings
 from app.services.dispatcher import TaskDispatcher
+from app.services.notifier import notify_enqueued
 
 
 def _is_auth_key_error(exc: BaseException) -> bool:
@@ -44,10 +46,17 @@ def _cache_peer(message: Message) -> None:
             if hasattr(peer, 'access_hash'):
                 redis_conn.set(f"tg:peer_hash:{message.chat.id}", str(peer.access_hash))
                 redis_conn.set(f"tg:peer_type:{message.chat.id}", type(peer).__name__)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"_cache_peer failed for chat {message.chat.id}: {exc}")
+
     import asyncio
-    asyncio.ensure_future(_do())
+    task = asyncio.ensure_future(_do())
+    # Log any unhandled exception that propagates out of _do() to avoid
+    # silent failures that are invisible to debugging.
+    task.add_done_callback(
+        lambda t: logger.warning(f"_cache_peer task raised: {t.exception()}")
+        if t.exception() else None
+    )
 
 
 # ------------------------------------------------------------------
@@ -57,8 +66,12 @@ def _cache_peer(message: Message) -> None:
 _enqueue_batches: dict[int, dict] = {}
 
 
-def _notify_enqueued(chat_id: int, first_msg_id: int, name: str, client: "Client") -> None:
-    """Add *name* to the per-chat batch and (re)start the 5-second flush timer."""
+def _notify_enqueued(chat_id: int, first_msg_id: int, name: str) -> None:
+    """Add *name* to the per-chat batch and (re)start the 5-second flush timer.
+
+    The flush sends one condensed notification via the configured notifier
+    (user client or bot), so rapid consecutive enqueues are grouped.
+    """
     batch = _enqueue_batches.get(chat_id)
     if batch is None:
         batch = {"names": [], "first_msg_id": first_msg_id, "timer": None}
@@ -68,10 +81,10 @@ def _notify_enqueued(chat_id: int, first_msg_id: int, name: str, client: "Client
     # Cancel existing timer and restart
     if batch["timer"] and not batch["timer"].done():
         batch["timer"].cancel()
-    batch["timer"] = asyncio.ensure_future(_flush_enqueue_batch(chat_id, client))
+    batch["timer"] = asyncio.ensure_future(_flush_enqueue_batch(chat_id))
 
 
-async def _flush_enqueue_batch(chat_id: int, client: "Client") -> None:
+async def _flush_enqueue_batch(chat_id: int) -> None:
     await asyncio.sleep(5)
     batch = _enqueue_batches.pop(chat_id, None)
     if not batch:
@@ -79,14 +92,9 @@ async def _flush_enqueue_batch(chat_id: int, client: "Client") -> None:
     names: list[str] = batch["names"]
     msg_id: int = batch["first_msg_id"]
     if len(names) == 1:
-        text = f"⏳ {names[0]} 已加入队列"
+        await notify_enqueued(chat_id, msg_id, names[0])
     else:
-        first = names[0]
-        text = f"⏳ {first} 等 {len(names)} 个任务已加入队列"
-    try:
-        await client.send_message(chat_id=chat_id, text=text, reply_to_message_id=msg_id)
-    except Exception as e:
-        logger.warning(f"Failed to send enqueue notification to {chat_id}: {e}")
+        await notify_enqueued(chat_id, msg_id, names[0], batch_count=len(names))
 
 # URL regex pattern for extracting links from messages
 URL_PATTERN = re.compile(
@@ -113,6 +121,7 @@ class TelegramListener:
     def __init__(self):
         self.client: Optional[Client] = None
         self.dispatcher: Optional[TaskDispatcher] = None
+        self._refresh_task: Optional[asyncio.Task] = None
 
     @property
     def is_running(self) -> bool:
@@ -148,16 +157,36 @@ class TelegramListener:
 
         # Export session string to Redis so worker processes can connect
         # using in_memory=True, avoiding SQLite file-locking conflicts.
-        try:
-            from app.core.redis import redis_conn
-            session_str = await self.client.export_session_string()
-            redis_conn.set("tg:session_string", session_str)
+        if await export_session_to_redis(self.client):
             logger.info("Session string exported to Redis for workers.")
-        except Exception as exc:
-            logger.warning(f"Could not export session string to Redis: {exc}")
+        else:
+            logger.warning("Could not export session string to Redis for workers.")
+
+        # Start a background task that periodically refreshes the session
+        # string in Redis.  This keeps the in-memory sessions used by
+        # workers valid even if Telegram's server side rotates the auth key
+        # or if the listener's .session file is replaced (e.g. by re-login).
+        self._refresh_task = asyncio.create_task(self._session_refresh_loop())
+        logger.info("Session string refresh loop started (interval: 4h).")
+
+    async def _session_refresh_loop(self) -> None:
+        """Periodically re-export the session string to Redis."""
+        while True:
+            await asyncio.sleep(4 * 3600)  # every 4 hours
+            if not self.client or not self.client.is_connected:
+                logger.debug("Listener not connected, skipping session refresh.")
+                continue
+            if await export_session_to_redis(self.client):
+                logger.debug("Session string refreshed in Redis.")
+            else:
+                logger.warning("Failed to refresh session string in Redis.")
 
     async def stop(self):
         """Stop the Telegram client."""
+        # Cancel the refresh loop first
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
+            self._refresh_task = None
         if self.client:
             await self.client.stop()
             logger.info("Telegram listener stopped.")
@@ -214,7 +243,7 @@ class TelegramListener:
             chat_id=message.chat.id,
             message_id=message.id,
         )
-        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
+        _notify_enqueued(message.chat.id, message.id, file_name)
 
     async def _handle_tg_document(self, message: Message):
         """Handle Telegram document messages."""
@@ -232,7 +261,7 @@ class TelegramListener:
             chat_id=message.chat.id,
             message_id=message.id,
         )
-        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
+        _notify_enqueued(message.chat.id, message.id, file_name)
 
     async def _handle_tg_photo(self, message: Message):
         """Handle Telegram photo messages."""
@@ -269,7 +298,7 @@ class TelegramListener:
             chat_id=message.chat.id,
             message_id=message.id,
         )
-        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
+        _notify_enqueued(message.chat.id, message.id, file_name)
 
     async def _handle_text_message(self, message: Message):
         """Handle text messages, extract URLs for external download.
@@ -299,7 +328,7 @@ class TelegramListener:
                 chat_id=message.chat.id,
                 message_id=message.id,
             )
-            _notify_enqueued(message.chat.id, message.id, url, self.client)
+            _notify_enqueued(message.chat.id, message.id, url)
 
 
 # Module-level singleton — shared by lifespan (main.py) and config API

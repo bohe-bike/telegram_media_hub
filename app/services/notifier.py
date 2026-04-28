@@ -2,12 +2,18 @@
 
 After a download completes (or fails), reply to the original chat message
 so the user gets instant feedback without checking the Web UI.
+
+Supports two modes:
+- **user** (default): reply using the user's Pyrogram session (current behaviour)
+- **bot**: reply via a Telegram Bot (requires ``tg_bot_token``) — messages come
+  from the bot identity instead of the user's personal account.
 """
 
 from __future__ import annotations
 
 import random
 
+from httpx import AsyncClient
 from loguru import logger
 from pyrogram import raw
 from pyrogram.utils import get_channel_id
@@ -15,25 +21,11 @@ from pyrogram.utils import get_channel_id
 from app.core.tg_client import get_worker_client
 from app.core.settings import settings
 
+_BOT_API_BASE = "https://api.telegram.org/bot"
 
-def _fmt_bytes(b: int | None) -> str:
-    if not b:
-        return "unknown"
-    if b < 1024:
-        return f"{b} B"
-    if b < 1048576:
-        return f"{b / 1024:.1f} KB"
-    if b < 1073741824:
-        return f"{b / 1048576:.1f} MB"
-    return f"{b / 1073741824:.2f} GB"
-
-
-def _fmt_speed(bps: float | None) -> str:
-    if not bps:
-        return "--"
-    if bps < 1048576:
-        return f"{bps / 1024:.0f} KB/s"
-    return f"{bps / 1048576:.1f} MB/s"
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 async def notify_complete(
@@ -56,7 +48,7 @@ async def notify_complete(
         f"大小：{_fmt_bytes(file_size)}\n"
         f"速度：{_fmt_speed(speed)}"
     )
-    await _send_reply(chat_id, message_id, text)
+    await _send_message(chat_id, message_id, text)
 
 
 async def notify_failed(
@@ -84,10 +76,90 @@ async def notify_failed(
         f"错误：{(error or 'unknown')[:200]}\n"
         f"状态：{status}"
     )
-    await _send_reply(chat_id, message_id, text)
+    await _send_message(chat_id, message_id, text)
 
 
-async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
+async def notify_enqueued(
+    chat_id: int,
+    message_id: int,
+    file_name: str,
+    batch_count: int | None = None,
+) -> None:
+    """Send a 'task enqueued' notification.
+
+    If *batch_count* is given the message says "xxx 等 N 个任务已加入队列",
+    otherwise it's a single-task message.
+    """
+    if not chat_id:
+        return
+    if batch_count and batch_count > 1:
+        text = f"\u23f3 {file_name} 等 {batch_count} 个任务已加入队列"
+    else:
+        text = f"\u23f3 {file_name} 已加入队列"
+    await _send_message(chat_id, message_id, text)
+
+
+# ---------------------------------------------------------------------------
+# Unified sender — routes to bot or user client based on tg_notify_mode
+# ---------------------------------------------------------------------------
+
+
+async def _send_message(chat_id: int, message_id: int, text: str) -> None:
+    """Send a reply via the currently configured notification mode."""
+    mode = settings.tg_notify_mode
+    if mode == "bot":
+        ok = await _send_via_bot(chat_id, message_id, text)
+        if not ok:
+            logger.warning("Bot notification failed, falling back to user client")
+            await _send_via_user_client(chat_id, message_id, text)
+    else:
+        await _send_via_user_client(chat_id, message_id, text)
+
+
+# ---------------------------------------------------------------------------
+# Bot API sender (httpx)
+# ---------------------------------------------------------------------------
+
+
+async def _send_via_bot(chat_id: int, message_id: int, text: str) -> bool:
+    """Send a reply via Telegram Bot API. Returns True on success."""
+    token = settings.tg_bot_token
+    if not token:
+        logger.debug("Bot token not configured, skipping bot notification")
+        return False
+
+    url = f"{_BOT_API_BASE}{token}/sendMessage"
+    payload: dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+        "reply_to_message_id": message_id,
+    }
+
+    try:
+        async with AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return True
+            logger.warning(
+                "Bot API sendMessage failed "
+                "(HTTP {}) for chat {}: {}",
+                resp.status_code,
+                chat_id,
+                resp.text[:200],
+            )
+            return False
+    except Exception as e:
+        logger.warning("Bot API request failed for chat {}: {}", chat_id, e)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# User-client sender (Pyrogram — existing logic)
+# ---------------------------------------------------------------------------
+
+
+async def _send_via_user_client(chat_id: int, message_id: int, text: str) -> None:
     """Send a reply using the shared worker Pyrogram client."""
     client = await get_worker_client()
     if client is None:
@@ -110,7 +182,9 @@ async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
             return
         except Exception as e:
             logger.debug(
-                f"Raw peer send failed for chat {chat_id}, falling back to send_message: {e}"
+                "Raw peer send failed for chat {}, falling back to send_message: {}",
+                chat_id,
+                e,
             )
 
     async def _do_send(target):
@@ -129,9 +203,11 @@ async def _send_reply(chat_id: int, message_id: int, text: str) -> None:
             return
         except Exception as retry_e:
             logger.warning(
-                f"Failed to send TG notification to chat {chat_id} after peer resolve: {retry_e}"
+                "Failed to send TG notification to chat {} after peer resolve: {}",
+                chat_id,
+                retry_e,
             )
-        logger.warning(f"Failed to send TG notification to chat {chat_id}: {e}")
+        logger.warning("Failed to send TG notification to chat {}: {}", chat_id, e)
 
 
 def _build_peer(chat_id: int):
@@ -162,3 +238,28 @@ def _build_peer(chat_id: int):
         )
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _fmt_bytes(b: int | None) -> str:
+    if not b:
+        return "unknown"
+    if b < 1024:
+        return f"{b} B"
+    if b < 1048576:
+        return f"{b / 1024:.1f} KB"
+    if b < 1073741824:
+        return f"{b / 1048576:.1f} MB"
+    return f"{b / 1073741824:.2f} GB"
+
+
+def _fmt_speed(bps: float | None) -> str:
+    if not bps:
+        return "--"
+    if bps < 1048576:
+        return f"{bps / 1024:.0f} KB/s"
+    return f"{bps / 1048576:.1f} MB/s"

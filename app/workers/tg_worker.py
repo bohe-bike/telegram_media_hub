@@ -138,6 +138,10 @@ async def _do_download(task_id: int):
     temp_file = temp_dir / f"{file_name}.tmp"
     final_file = target_dir / file_name
 
+    # Defaults for the exception handler — if the DB session fails early
+    # these still have safe values instead of raising NameError.
+    client = None
+
     # ---- download ---------------------------------------------------
     try:
         client = await get_worker_client()

@@ -31,6 +31,25 @@ _BLOCKED_HOSTS = re.compile(
 )
 
 
+def _urls_match(a: str, b: str) -> bool:
+    """Compare two URLs by normalised netloc + path (ignoring scheme, query, fragment).
+
+    This avoids false positives from substring matching (e.g. ``abc`` vs ``abcdef``)
+    while tolerating MeTube's URL normalisation (e.g. short-link expansion).
+    """
+    try:
+        pa = urlparse(a)
+        pb = urlparse(b)
+    except Exception:
+        return a == b
+    # Compare host (case-insensitive) and path, strip trailing slashes
+    host_a = pa.hostname or ""
+    host_b = pb.hostname or ""
+    path_a = pa.path.rstrip("/")
+    path_b = pb.path.rstrip("/")
+    return host_a.lower() == host_b.lower() and path_a == path_b
+
+
 def _validate_url(url: str) -> None:
     """Raise ValueError if URL is unsafe (non-http/https or private addresses)."""
     try:
@@ -117,8 +136,11 @@ async def _poll_metube_completion(url: str, timeout_sec: int = 7200) -> dict:
 
             for item in data.get("done", []):
                 item_url = item.get("url", "")
-                # Exact or substring match to cope with URL normalisation
-                if item_url == url or url in item_url or item_url in url:
+                # Normalise both URLs for comparison: strip trailing slashes,
+                # query params, and fragment so that identical resources are
+                # matched even after MeTube normalisation (e.g. short links).
+                # Use urllib.parse to compare netloc + path (ignoring scheme).
+                if _urls_match(item_url, url):
                     status = item.get("status")
                     if status == "finished":
                         return item

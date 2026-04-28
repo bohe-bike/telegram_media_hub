@@ -1,5 +1,6 @@
 """Database connection and session management."""
 
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -31,6 +32,23 @@ async def get_session() -> AsyncSession:
 
 
 async def init_db():
-    """Create all tables (for development; use Alembic in production)."""
+    """Create all tables if Alembic hasn't been run yet.
+
+    If the ``alembic_version`` table exists (indicating Alembic manages the
+    schema), this is a no-op.  Otherwise it creates tables directly — suitable
+    for development / first-time setup.
+    """
+    async with engine.connect() as conn:
+        # Check if Alembic has ever applied a migration
+        has_alembic = await conn.run_sync(
+            lambda sync_conn: inspect(sync_conn).has_table("alembic_version")
+        )
+        if has_alembic:
+            import logging
+            logging.getLogger(__name__).info(
+                "Alembic migration detected — skipping init_db() table creation."
+            )
+            return
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
