@@ -110,7 +110,7 @@ URL_PATTERN = re.compile(
     r'bilibili\.com/video/|b23\.tv/|'
     r'twitter\.com/|x\.com/|'
     r'[\w.-]+\.[\w]{2,})'
-    r'[^\s<>\"\']* ',
+    r'[^\s<>\"\']*',
     re.IGNORECASE,
 )
 
@@ -320,7 +320,7 @@ class TelegramListener:
             chat_id=message.chat.id,
             message_id=message.id,
         )
-        _notify_enqueued(message.chat.id, message.id, file_name, self.client)
+        _notify_enqueued(message.chat.id, message.id, file_name)
 
     async def _handle_tg_audio(self, message: Message):
         """Handle Telegram audio messages."""

@@ -4,17 +4,18 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.api.auth import router as auth_router
 from app.api.config import router as config_router
 from app.api.proxies import router as proxies_router
+from app.api.session import router as session_router
 from app.api.status import router as status_router
 from app.api.tasks import router as tasks_router
-from app.core.auth import verify_api_key
+from app.core.auth import is_session_request, verify_api_key
 from app.core.database import init_db
 from app.services.proxy_pool import ProxyPool
 from app.services.telegram import tg_listener
@@ -282,6 +283,7 @@ app = FastAPI(
 )
 
 # ---- API routes ----
+app.include_router(session_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api", dependencies=[Depends(verify_api_key)])
 app.include_router(config_router, prefix="/api", dependencies=[Depends(verify_api_key)])
 app.include_router(auth_router, prefix="/api", dependencies=[Depends(verify_api_key)])
@@ -294,8 +296,17 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ---- Serve frontend SPA ----
 @app.get("/")
-async def serve_index():
+async def serve_index(request: Request):
+    if not is_session_request(request):
+        return RedirectResponse(url="/login", status_code=303)
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/login")
+async def serve_login(request: Request):
+    if is_session_request(request):
+        return RedirectResponse(url="/", status_code=303)
+    return FileResponse(str(STATIC_DIR / "login.html"))
 
 
 @app.get("/health")

@@ -11,7 +11,7 @@ import asyncio
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from loguru import logger
@@ -31,23 +31,55 @@ _BLOCKED_HOSTS = re.compile(
 )
 
 
+def _host_matches(host: str, domain: str) -> bool:
+    return host == domain or host.endswith(f".{domain}")
+
+
+def _youtube_video_id(url: str) -> str | None:
+    """Extract a stable YouTube video id from common URL shapes."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+
+    host = (parsed.hostname or "").lower()
+    parts = [p for p in parsed.path.split("/") if p]
+
+    if host in {"youtu.be", "www.youtu.be"}:
+        return parts[0] if parts else None
+
+    if _host_matches(host, "youtube.com") or _host_matches(host, "youtube-nocookie.com"):
+        query_id = parse_qs(parsed.query).get("v", [None])[0]
+        if query_id:
+            return query_id
+        if len(parts) >= 2 and parts[0] in {"shorts", "embed", "v"}:
+            return parts[1]
+
+    return None
+
+
+def _canonical_download_key(url: str) -> tuple:
+    """Return a comparable key for a download URL."""
+    youtube_id = _youtube_video_id(url)
+    if youtube_id:
+        return ("youtube", youtube_id)
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.rstrip("/")
+    return ("url", host, path)
+
+
 def _urls_match(a: str, b: str) -> bool:
-    """Compare two URLs by normalised netloc + path (ignoring scheme, query, fragment).
+    """Compare two URLs by their platform resource key.
 
     This avoids false positives from substring matching (e.g. ``abc`` vs ``abcdef``)
     while tolerating MeTube's URL normalisation (e.g. short-link expansion).
     """
     try:
-        pa = urlparse(a)
-        pb = urlparse(b)
+        return _canonical_download_key(a) == _canonical_download_key(b)
     except Exception:
         return a == b
-    # Compare host (case-insensitive) and path, strip trailing slashes
-    host_a = pa.hostname or ""
-    host_b = pb.hostname or ""
-    path_a = pa.path.rstrip("/")
-    path_b = pb.path.rstrip("/")
-    return host_a.lower() == host_b.lower() and path_a == path_b
 
 
 def _validate_url(url: str) -> None:

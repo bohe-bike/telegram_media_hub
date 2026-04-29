@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录 - Telegram Media Hub</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: #0f1117;
+        --bg2: #181b24;
+        --bg3: #1e222d;
+        --border: #2a2e3b;
+        --text: #e4e6eb;
+        --text2: #9ca0ab;
+        --text3: #6b7080;
+        --accent: #3b82f6;
+        --accent-h: #2563eb;
+        --red: #ef4444;
+        --radius: 8px;
+      }
+
+      body {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px 16px;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+
+      .login-shell {
+        width: min(100%, 380px);
+      }
+
+      .brand {
+        margin-bottom: 18px;
+      }
+
+      .brand h1 {
+        font-size: 1.55rem;
+        font-weight: 650;
+      }
+
+      .brand p {
+        margin-top: 4px;
+        color: var(--text2);
+        font-size: 0.92rem;
+      }
+
+      .panel {
+        background: var(--bg2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 22px;
+      }
+
+      .field {
+        margin-bottom: 14px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--text2);
+        font-size: 0.86rem;
+      }
+
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg3);
+        color: var(--text);
+        font-size: 0.95rem;
+        outline: none;
+      }
+
+      input:focus {
+        border-color: var(--accent);
+      }
+
+      button {
+        width: 100%;
+        border: none;
+        border-radius: var(--radius);
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+        font-size: 0.95rem;
+        font-weight: 600;
+        padding: 10px 16px;
+        transition: 0.15s;
+      }
+
+      button:hover {
+        background: var(--accent-h);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .alert {
+        display: none;
+        margin-bottom: 14px;
+        padding: 10px 12px;
+        border-radius: var(--radius);
+        background: #ef444420;
+        border: 1px solid #ef444440;
+        color: var(--red);
+        font-size: 0.86rem;
+      }
+
+      .footer {
+        margin-top: 14px;
+        color: var(--text3);
+        font-size: 0.78rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="login-shell">
+      <div class="brand">
+        <h1>Telegram Media Hub</h1>
+        <p>管理员登录</p>
+      </div>
+      <section class="panel">
+        <div id="alert" class="alert"></div>
+        <form id="login-form">
+          <div class="field">
+            <label for="username">账号</label>
+            <input
+              id="username"
+              name="username"
+              autocomplete="username"
+              autofocus
+              required
+            />
+          </div>
+          <div class="field">
+            <label for="password">密码</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+          <button id="submit" type="submit">登录</button>
+        </form>
+      </section>
+      <div class="footer">Self-hosted media control center</div>
+    </main>
+
+    <script>
+      const form = document.querySelector("#login-form");
+      const alertBox = document.querySelector("#alert");
+      const submit = document.querySelector("#submit");
+
+      function showError(message) {
+        alertBox.textContent = message;
+        alertBox.style.display = "block";
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        alertBox.style.display = "none";
+        submit.disabled = true;
+        submit.textContent = "登录中...";
+
+        const body = {
+          username: form.username.value.trim(),
+          password: form.password.value,
+        };
+
+        try {
+          const resp = await fetch("/api/session/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error(data.detail || "登录失败");
+          }
+          const params = new URLSearchParams(window.location.search);
+          const next = params.get("next") || "/";
+          window.location.href = next.startsWith("/") ? next : "/";
+        } catch (err) {
+          showError(err.message || "登录失败");
+          submit.disabled = false;
+          submit.textContent = "登录";
+        }
+      });
+    </script>
+  </body>
+</html>

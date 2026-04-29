@@ -6,6 +6,7 @@ completion / failure notifications back to the originating TG chat.
 
 import asyncio
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -27,10 +28,35 @@ from app.workers.retry_handler import schedule_retry
 # Per-task throttle state for progress callbacks (task_id -> timestamp/start)
 _progress_ts: dict[int, float] = {}
 _progress_start: dict[int, float] = {}
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def _is_file_reference_expired(exc: BaseException) -> bool:
     return "file_reference_expired" in str(exc).lower()
+
+
+def _safe_file_name(file_name: str | None, task_id: int) -> str:
+    """Return a filesystem-safe basename for Telegram-provided filenames."""
+    raw_name = str(file_name or "").strip() or f"task_{task_id}"
+    name = Path(raw_name).name
+    name = _INVALID_FILENAME_CHARS.sub("_", name).strip(" .")
+    if not name:
+        name = f"task_{task_id}"
+
+    max_len = 180
+    if len(name) > max_len:
+        p = Path(name)
+        suffix = p.suffix[:32]
+        stem_len = max_len - len(suffix)
+        stem = (p.stem or f"task_{task_id}")[:stem_len]
+        name = f"{stem}{suffix}"
+    return name
+
+
+def _task_paths(temp_dir: Path, target_dir: Path, task_id: int, file_name: str | None) -> tuple[Path, Path]:
+    safe_name = _safe_file_name(file_name, task_id)
+    stored_name = f"{task_id}_{safe_name}"
+    return temp_dir / f"{stored_name}.tmp", target_dir / stored_name
 
 
 def _build_peer_from_redis(chat_id: int):
@@ -261,8 +287,7 @@ async def _do_download(task_id: int):
     temp_dir = settings.temp_path
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    temp_file = temp_dir / f"{file_name}.tmp"
-    final_file = target_dir / file_name
+    temp_file, final_file = _task_paths(temp_dir, target_dir, task_id, file_name)
 
     # Defaults for the exception handler — if the DB session fails early
     # these still have safe values instead of raising NameError.
@@ -290,8 +315,7 @@ async def _do_download(task_id: int):
                 chat_id=chat_id,
                 message_id=message_id,
             )
-            final_file = target_dir / file_name
-            temp_file = temp_dir / f"{file_name}.tmp"
+            temp_file, final_file = _task_paths(temp_dir, target_dir, task_id, file_name)
             if refreshed_size > 0:
                 file_size = refreshed_size
             refreshed_reference = True
@@ -323,8 +347,7 @@ async def _do_download(task_id: int):
                 chat_id=chat_id,
                 message_id=message_id,
             )
-            final_file = target_dir / file_name
-            temp_file = temp_dir / f"{file_name}.tmp"
+            temp_file, final_file = _task_paths(temp_dir, target_dir, task_id, file_name)
             if refreshed_size > 0:
                 file_size = refreshed_size
             refreshed_reference = True
@@ -361,8 +384,7 @@ async def _do_download(task_id: int):
                 chat_id=chat_id,
                 message_id=message_id,
             )
-            final_file = target_dir / file_name
-            temp_file = temp_dir / f"{file_name}.tmp"
+            temp_file, final_file = _task_paths(temp_dir, target_dir, task_id, file_name)
             if refreshed_size > 0:
                 file_size = refreshed_size
 

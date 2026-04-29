@@ -1,45 +1,84 @@
-"""API key authentication dependency.
+"""Web login and API key authentication helpers.
 
-If `api_secret_key` is empty in settings, authentication is disabled (first-time
-setup mode). Once a key is configured, all protected API routes require the header:
+Protected API routes accept either:
 
-    X-API-Key: <your-secret-key>
+- a valid web-login session cookie, or
+- the header X-API-Key: <your-secret-key> when api_secret_key is configured.
 """
 
-from fastapi import Depends, HTTPException, Security, status
+import hmac
+import time
+from hashlib import sha256
+
+from fastapi import HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
-from loguru import logger
 
 from app.core.settings import settings
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Track whether we've already logged the warning to avoid spam
-_unconfigured_warning_logged = False
+WEB_LOGIN_USERNAME = "admin"
+WEB_LOGIN_PASSWORD = "songbike.7799"
+SESSION_COOKIE_NAME = "tmh_session"
+SESSION_MAX_AGE_SECONDS = 7 * 24 * 3600
 
 
-async def verify_api_key(api_key: str | None = Security(_api_key_header)) -> None:
-    """Verify the API key from the X-API-Key header.
+def _signing_secret() -> bytes:
+    secret = settings.api_secret_key or f"{WEB_LOGIN_USERNAME}:{WEB_LOGIN_PASSWORD}:telegram-media-hub"
+    return secret.encode("utf-8")
 
-    Skips verification when api_secret_key is not configured (first-time setup).
-    """
-    global _unconfigured_warning_logged
 
-    secret = settings.api_secret_key
-    if not secret:
-        # Not yet configured – allow access for initial setup
-        if not _unconfigured_warning_logged:
-            logger.warning(
-                "⚠️  API authentication is DISABLED - api_secret_key is not configured. "
-                "All API endpoints are currently UNPROTECTED. "
-                "Set api_secret_key in settings immediately after initial setup."
-            )
-            _unconfigured_warning_logged = True
+def _session_signature(payload: str) -> str:
+    return hmac.new(_signing_secret(), payload.encode("utf-8"), sha256).hexdigest()
+
+
+def create_session_cookie(username: str = WEB_LOGIN_USERNAME) -> str:
+    expires_at = int(time.time()) + SESSION_MAX_AGE_SECONDS
+    payload = f"{username}:{expires_at}"
+    return f"{payload}:{_session_signature(payload)}"
+
+
+def is_valid_session_token(token: str | None) -> bool:
+    if not token:
+        return False
+
+    try:
+        username, expires_at_raw, signature = token.rsplit(":", 2)
+        expires_at = int(expires_at_raw)
+    except (TypeError, ValueError):
+        return False
+
+    if username != WEB_LOGIN_USERNAME or expires_at < int(time.time()):
+        return False
+
+    payload = f"{username}:{expires_at}"
+    return hmac.compare_digest(signature, _session_signature(payload))
+
+
+def is_session_request(request: Request) -> bool:
+    return is_valid_session_token(request.cookies.get(SESSION_COOKIE_NAME))
+
+
+def check_login_credentials(username: str, password: str) -> bool:
+    return hmac.compare_digest(username, WEB_LOGIN_USERNAME) and hmac.compare_digest(
+        password, WEB_LOGIN_PASSWORD
+    )
+
+
+async def verify_api_key(
+    request: Request,
+    api_key: str | None = Security(_api_key_header),
+) -> None:
+    """Verify either the web-login cookie or configured API key."""
+    if is_session_request(request):
         return
 
-    if not api_key or api_key != secret:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key. Set X-API-Key header.",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
+    secret = settings.api_secret_key
+    if secret and api_key and hmac.compare_digest(api_key, secret):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Login required.",
+        headers={"WWW-Authenticate": "ApiKey"},
+    )

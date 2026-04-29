@@ -403,6 +403,14 @@ async def sign_in_2fa(body: TwoFAReq):
 @router.post("/logout")
 async def logout():
     """Disconnect and remove session file."""
+    from app.services.telegram import tg_listener
+
+    if tg_listener.is_running:
+        try:
+            await tg_listener.stop()
+        except Exception as exc:
+            logger.warning(f"Failed to stop Telegram listener during logout: {exc}")
+
     if _state.client:
         try:
             await _state.client.disconnect()
