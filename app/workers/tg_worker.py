@@ -63,29 +63,40 @@ async def _warm_peer_cache(client, chat_id: int) -> None:
 
     Without this, worker in-memory sessions cannot resolve channel/user
     IDs, causing ``PEER_ID_INVALID`` on every ``get_messages()`` /
-    ``get_chat()`` call.  We use Redis-cached peer hashes (set by the
-    listener) to build raw peer objects and inject them via low-level
-    API calls that force Pyrogram to remember them.
+    ``get_chat()`` call.
+
+    Three-tier strategy:
+      1. Redis-cached peer → raw API injection
+      2. ``client.resolve_peer()`` → dynamic resolution from Telegram
+      3. ignore silently (downstream will handle failure)
     """
+    # Tier 1: Redis cache
     peer = _build_peer_from_redis(chat_id)
-    if peer is None:
-        return
-    try:
-        # fetch_chat with the raw peer forces Pyrogram to cache it
-        await client.invoke(
-            raw.functions.channels.GetChannels(
-                id=[peer]
-            )
-        )
-    except Exception:
+    if peer is not None:
         try:
-            await client.invoke(
-                raw.functions.users.GetUsers(
-                    id=[peer]
+            if isinstance(peer, raw.types.InputPeerChannel):
+                inp = raw.types.InputChannel(
+                    channel_id=peer.channel_id,
+                    access_hash=peer.access_hash,
                 )
-            )
-        except Exception:
-            pass
+                await client.invoke(raw.functions.channels.GetChannels(id=[inp]))
+                return
+            elif isinstance(peer, raw.types.InputPeerUser):
+                inp = raw.types.InputUser(
+                    user_id=peer.user_id,
+                    access_hash=peer.access_hash,
+                )
+                await client.invoke(raw.functions.users.GetUsers(id=[inp]))
+                return
+        except Exception as exc:
+            logger.debug(f"_warm_peer_cache Redis tier failed for chat {chat_id}: {exc}")
+
+    # Tier 2: dynamic resolution via Pyrogram (slower but always works)
+    try:
+        await client.resolve_peer(chat_id)
+        return
+    except Exception as exc:
+        logger.debug(f"_warm_peer_cache resolve_peer failed for chat {chat_id}: {exc}")
 
 
 async def _load_origin_message(client, chat_id: int, message_id: int) -> Message:
@@ -109,35 +120,33 @@ async def _load_origin_message(client, chat_id: int, message_id: int) -> Message
     # Fallback: raw API using Redis-cached peer
     peer = _build_peer_from_redis(chat_id)
     if peer is not None:
-        try:
-            result = await client.invoke(
-                raw.functions.channels.GetMessages(
-                    channel=peer,
-                    id=[message_id],
+        # Channel fallback
+        if isinstance(peer, (raw.types.InputPeerChannel, raw.types.InputPeerChat)):
+            try:
+                result = await client.invoke(
+                    raw.functions.channels.GetMessages(
+                        channel=peer,
+                        id=[raw.types.InputMessageID(id=message_id)],
+                    )
                 )
-            )
-            if isinstance(result, raw.types.messages.Messages):
-                msgs = list(result.messages)
-            elif hasattr(result, 'messages'):
-                msgs = list(result.messages)
-            else:
-                msgs = []
-            if msgs:
-                return await Message._parse(client, msgs[0])
-        except Exception:
-            pass
-
-        try:
-            result = await client.invoke(
-                raw.functions.messages.GetMessages(
-                    id=[raw.types.InputMessageID(id=message_id)],
+                msgs = result.messages if hasattr(result, 'messages') else []
+                if msgs:
+                    return await Message._parse(client, msgs[0])
+            except Exception:
+                pass
+        # User fallback
+        else:
+            try:
+                result = await client.invoke(
+                    raw.functions.messages.GetMessages(
+                        id=[raw.types.InputMessageID(id=message_id)],
+                    )
                 )
-            )
-            if hasattr(result, 'messages') and result.messages:
-                return await Message._parse(client, result.messages[0])
-        except Exception:
-            pass
-
+                msgs = result.messages if hasattr(result, 'messages') else []
+                if msgs:
+                    return await Message._parse(client, msgs[0])
+            except Exception:
+                pass
     raise RuntimeError(
         f"Could not fetch origin message {message_id} from chat {chat_id}"
     )

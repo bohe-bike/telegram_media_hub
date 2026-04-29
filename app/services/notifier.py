@@ -170,6 +170,31 @@ async def _send_via_bot(chat_id: int, message_id: int, text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+async def _warm_notifier_peer(client, chat_id: int) -> None:
+    """Populate Pyrogram's in-memory peer cache for notifier sends."""
+    peer = _build_peer(chat_id)
+    if peer is not None:
+        try:
+            if isinstance(peer, raw.types.InputPeerChannel):
+                inp = raw.types.InputChannel(
+                    channel_id=peer.channel_id,
+                    access_hash=peer.access_hash,
+                )
+                await client.invoke(raw.functions.channels.GetChannels(id=[inp]))
+            elif isinstance(peer, raw.types.InputPeerUser):
+                inp = raw.types.InputUser(
+                    user_id=peer.user_id,
+                    access_hash=peer.access_hash,
+                )
+                await client.invoke(raw.functions.users.GetUsers(id=[inp]))
+        except Exception:
+            pass
+    try:
+        await client.resolve_peer(chat_id)
+    except Exception:
+        pass
+
+
 async def _send_via_user_client(chat_id: int, message_id: int, text: str) -> None:
     """Send a reply using the shared worker Pyrogram client."""
     client = await get_worker_client()
@@ -177,23 +202,8 @@ async def _send_via_user_client(chat_id: int, message_id: int, text: str) -> Non
         logger.debug("No TG client available – skipping notification")
         return
 
-    # Warm peer cache from Redis so in-memory worker sessions can resolve
-    # channel/user IDs (avoids PEER_ID_INVALID).
-    try:
-        from app.core.redis import redis_conn
-        raw_hash = redis_conn.get(f"tg:peer_hash:{chat_id}")
-        if raw_hash is not None:
-            peer = _build_peer(chat_id)
-            if peer is not None:
-                try:
-                    await client.invoke(raw.functions.channels.GetChannels(id=[peer]))
-                except Exception:
-                    try:
-                        await client.invoke(raw.functions.users.GetUsers(id=[peer]))
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+    # Warm peer cache so in-memory worker sessions can resolve IDs
+    await _warm_notifier_peer(client, chat_id)
 
     peer = _build_peer(chat_id)
 

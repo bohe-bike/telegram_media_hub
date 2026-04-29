@@ -135,13 +135,10 @@ async def _parallel_stream(
         nonlocal downloaded_bytes
         offset = idx * CHUNK_SIZE
         remaining = file_size - offset
-        # Telegram requires limit to be a multiple of 4096 and at most CHUNK_SIZE.
-        # Round up to the next 4096 boundary so the last chunk is always valid.
         limit = min(CHUNK_SIZE, ((remaining + 4095) // 4096) * 4096)
 
         for attempt in range(5):
             try:
-                # Check session health before each attempt (handles idle disconnects)
                 if attempt > 0:
                     sess = await _ensure_session_alive(sess, client, dc_id)
 
@@ -161,6 +158,10 @@ async def _parallel_stream(
                 )
                 await asyncio.sleep(wait_secs)
             except Exception as e:
+                # FILE_REFERENCE_EXPIRED is not retryable — the file_id itself
+                # is stale and must be refreshed from the origin message first.
+                if "file_reference_expired" in str(e).lower():
+                    raise
                 if attempt == 4:
                     raise
                 logger.debug(f"Chunk {idx} attempt {attempt+1} failed: {e}")
