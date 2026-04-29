@@ -17,7 +17,12 @@ from app.services.notifier import notify_enqueued
 def _is_auth_key_error(exc: BaseException) -> bool:
     """Return True if *exc* indicates the session's auth key is no longer valid."""
     msg = str(exc).lower()
-    return "auth key" in msg or "transport error: 404" in msg
+    return (
+        "auth_key" in msg
+        or "auth key" in msg
+        or "authorization key" in msg
+        or "transport error: 404" in msg
+    )
 
 
 def _clear_session() -> None:
@@ -129,8 +134,16 @@ class TelegramListener:
         """Return True if the underlying Pyrogram client is connected."""
         return self.client is not None and self.client.is_connected
 
-    async def start(self):
-        """Initialize and start the Telegram client."""
+    async def start(self, max_retries: int = 3, retry_delay: float = 5.0):
+        """Initialize and start the Telegram client.
+
+        Parameters
+        ----------
+        max_retries : int
+            Maximum number of retries on AUTH_KEY_DUPLICATED errors.
+        retry_delay : float
+            Seconds to wait between retries (doubles each attempt).
+        """
         proxy = settings.tg_proxy
         self.client = Client(
             name=settings.tg_session_name,
@@ -145,14 +158,40 @@ class TelegramListener:
 
         self._register_handlers()
 
-        logger.info("Starting Telegram listener...")
-        try:
-            await self.client.start()
-        except Exception as e:
-            if _is_auth_key_error(e):
-                logger.error(f"Auth key invalid – clearing stale session: {e}")
-                _clear_session()
-            raise
+        # Retry loop for AUTH_KEY_DUPLICATED - happens when a previous session
+        # is still active on Telegram's server (e.g., container was killed).
+        # Telegram will eventually drop the old connection, so we just wait and retry.
+        for attempt in range(max_retries + 1):
+            logger.info(
+                f"Starting Telegram listener (attempt {attempt + 1}/{max_retries + 1})..."
+            )
+            try:
+                await self.client.start()
+                break  # Success
+            except Exception as e:
+                is_dup = "AUTH_KEY_DUPLICATED" in str(e).upper()
+                if is_dup and attempt < max_retries:
+                    # Telegram server still thinks old connection is alive.
+                    # Wait with exponential backoff: 10s → 20s → 40s
+                    wait_time = retry_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Auth key conflict – Telegram still holding old connection. "
+                        f"Waiting {wait_time}s before retry {attempt + 2}/{max_retries + 1}..."
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    if is_dup:
+                        logger.error(
+                            f"Failed to start after {max_retries + 1} attempts. "
+                            f"This usually means a previous container/process didn't "
+                            f"shut down cleanly. Wait a few minutes and try again."
+                        )
+                    # For other auth errors, clear stale session
+                    if _is_auth_key_error(e):
+                        logger.error(f"Auth key invalid – clearing stale session: {e}")
+                        _clear_session()
+                    raise
+
         me = await self.client.get_me()
         logger.info(f"Logged in as {me.first_name} (ID: {me.id})")
 

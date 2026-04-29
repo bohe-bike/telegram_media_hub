@@ -70,10 +70,11 @@ async def lifespan(app: FastAPI):
             f"{settings.tg_session_name}.session"
         if session_file.exists():
             try:
-                await asyncio.wait_for(tg_listener.start(), timeout=60)
+                # Allow up to 5 minutes for retries in case of AUTH_KEY_DUPLICATED
+                await asyncio.wait_for(tg_listener.start(max_retries=3, retry_delay=30), timeout=300)
             except asyncio.TimeoutError:
                 logger.warning(
-                    "TG listener startup timed out (60s). "
+                    "TG listener startup timed out (300s). "
                     "Server will continue without it – check proxy/network."
                 )
             except Exception as e:
