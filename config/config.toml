@@ -58,8 +58,8 @@ tg_parallel_threshold = 10
 tg_notify_on_complete = true
 # 下载最终失败后在 TG 聊天中回复通知
 tg_notify_on_fail = true
-# 回复方式: "user" = 以自己身份回复, "bot" = 以机器人身份回复
-tg_notify_mode = "user"
+# 回复方式: "user" = 以自己身份回复, "bot" = 以机器人身份回复（默认）
+tg_notify_mode = "bot"
 # Bot Token（从 @BotFather 获取），tg_notify_mode = "bot" 时必填
 tg_bot_token = ""
 

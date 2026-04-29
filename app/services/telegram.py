@@ -31,7 +31,8 @@ def _clear_session() -> None:
     try:
         from app.core.redis import redis_conn
         redis_conn.delete("tg:session_string")
-        logger.info("Redis session string cleared.")
+        redis_conn.delete("tg:session_gen")
+        logger.info("Redis session string and generation cleared.")
     except Exception:
         pass
 

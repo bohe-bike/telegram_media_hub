@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     # Notification
     tg_notify_on_complete: bool = True       # reply in chat when download finishes
     tg_notify_on_fail: bool = True           # reply in chat when download fails
-    tg_notify_mode: str = "user"            # "user" = reply as yourself, "bot" = reply via bot
+    tg_notify_mode: str = "bot"             # "user" = reply as yourself, "bot" = reply via bot (default)
     tg_bot_token: str = ""                  # BotFather token (required when notify_mode="bot")
 
     # Web UI authentication (set a non-empty value to enable API key protection)

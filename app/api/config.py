@@ -42,7 +42,7 @@ class ConfigData(BaseModel):
     tg_parallel_threshold: int = 10
     tg_notify_on_complete: bool = True
     tg_notify_on_fail: bool = True
-    tg_notify_mode: str = "user"
+    tg_notify_mode: str = "bot"
     tg_bot_token: str = ""
     api_secret_key: str = ""
     proxy_fail_threshold: int = 3
@@ -50,6 +50,64 @@ class ConfigData(BaseModel):
 
 
 # ---- helpers ---------------------------------------------------------
+
+# 新版本中新增的配置项及其默认值。
+# 旧版 config.toml 缺失这些字段时，会在首次加载时自动补充。
+_NEW_FIELDS_DEFAULTS: dict[str, object] = {
+    "tg_notify_mode": "bot",
+    "tg_bot_token": "",
+    "proxy_fail_threshold": 3,
+    "proxy_check_interval": 300,
+}
+
+
+def _upgrade_config_toml() -> None:
+    """Auto-insert any missing new config fields into config.toml.
+
+    Called once at module import so that old config files automatically
+    gain new keys without requiring the user to manually edit or save.
+    """
+    if not TOML_FILE.exists():
+        return
+
+    try:
+        with open(TOML_FILE, "rb") as f:
+            import tomllib
+            data = tomllib.load(f)
+    except Exception:
+        return
+
+    # Flatten to check for missing keys
+    flat: dict = {}
+    for key, val in data.items():
+        if isinstance(val, dict):
+            flat.update(val)
+        else:
+            flat[key] = val
+
+    missing = {k: v for k, v in _NEW_FIELDS_DEFAULTS.items() if k not in flat}
+    if not missing:
+        return
+
+    # Append missing keys at the end of the file
+    with open(TOML_FILE, "a", encoding="utf-8") as f:
+        f.write("\n")
+        f.write("# ============================================================\n")
+        f.write("# 新增配置项（自动补充）\n")
+        f.write("# ============================================================\n")
+        for key, val in missing.items():
+            if isinstance(val, bool):
+                f.write(f"{key} = {str(val).lower()}\n")
+            elif isinstance(val, str):
+                f.write(f'{key} = "{val}"\n')
+            else:
+                f.write(f"{key} = {val}\n")
+
+    logger.info("Auto-added missing config fields to config.toml: {}", list(missing.keys()))
+
+
+# Run upgrade check once at import time
+_upgrade_config_toml()
 
 def _read_toml() -> dict:
     """Parse config.toml into a flat dict (merges all top-level sections)."""

@@ -40,7 +40,17 @@ from app.core.settings import settings
 _WAIT_FOR_SESSION_TIMEOUT = 60  # seconds
 
 _worker_client: Client | None = None
+_worker_gen: int = -1     # generation counter of the cached _worker_client
 _lock = asyncio.Lock()
+
+
+async def _get_session_gen() -> int:
+    """Read the current session generation counter from Redis."""
+    from app.core.redis import redis_conn
+    raw_val = redis_conn.get("tg:session_gen")
+    if raw_val is None:
+        return -1
+    return int(raw_val)
 
 
 async def _wait_for_session_string() -> str | None:
@@ -64,8 +74,12 @@ async def get_worker_client() -> Client | None:
 
     Returns ``None`` when credentials or session are not available (in which
     case the caller should skip TG operations gracefully).
+
+    If the session has been re-exported to Redis (e.g. after a re-login),
+    the cached client is automatically discarded and a fresh one is created
+    from the latest session string.
     """
-    global _worker_client
+    global _worker_client, _worker_gen
 
     if not settings.tg_api_id or not settings.tg_api_hash:
         return None
@@ -83,6 +97,22 @@ async def get_worker_client() -> Client | None:
         return None
 
     async with _lock:
+        # Check if the session has been re-exported (generation changed).
+        # This catches re-login scenarios: the Redis session string is
+        # new but our cached client still uses the old (now-invalid) one.
+        current_gen = await _get_session_gen()
+        if _worker_client is not None and _worker_gen != current_gen:
+            logger.info(
+                "Session generation changed ({} → {}), discarding old worker client.",
+                _worker_gen, current_gen,
+            )
+            try:
+                await _worker_client.disconnect()
+            except Exception:
+                pass
+            _worker_client = None
+            _worker_gen = -1
+
         if _worker_client is None:
             _worker_client = Client(
                 name=":memory:",
@@ -92,14 +122,17 @@ async def get_worker_client() -> Client | None:
                 proxy=settings.tg_proxy,
             )
             await _worker_client.start()
-            logger.info("Shared worker Pyrogram client started (in-memory session).")
+            _worker_gen = current_gen
+            logger.info("Shared worker Pyrogram client started (in-memory session, gen={}).", current_gen)
         elif not _worker_client.is_connected:
             # Re-fetch session string from Redis — the listener may have
             # refreshed it since initial connect.
             fresh_str = await _wait_for_session_string()
+            fresh_gen = await _get_session_gen()
             if not fresh_str:
                 logger.warning("Cannot reconnect worker: no session string in Redis.")
                 _worker_client = None
+                _worker_gen = -1
                 return None
 
             # Replace the old client with a fresh one using the latest string.
@@ -116,7 +149,8 @@ async def get_worker_client() -> Client | None:
             )
             try:
                 await _worker_client.start()
-                logger.info("Shared worker Pyrogram client reconnected with fresh session string.")
+                _worker_gen = fresh_gen
+                logger.info("Shared worker Pyrogram client reconnected (gen={}).", fresh_gen)
             except Exception as exc:
                 _is_auth = "auth key" in str(exc).lower() or "transport error: 404" in str(exc).lower()
                 if _is_auth:
@@ -124,11 +158,13 @@ async def get_worker_client() -> Client | None:
                     try:
                         from app.core.redis import redis_conn as _rc
                         _rc.delete("tg:session_string")
+                        _rc.delete("tg:session_gen")
                     except Exception:
                         pass
                 else:
                     logger.warning(f"Failed to reconnect worker client: {exc}")
                 _worker_client = None
+                _worker_gen = -1
                 return None
         else:
             # Connection appears up, but verify with a lightweight ping
@@ -142,9 +178,11 @@ async def get_worker_client() -> Client | None:
                 logger.debug("Main worker client ping failed, attempting reconnect")
                 # Same re-fetch + reconnect flow as above
                 fresh_str = await _wait_for_session_string()
+                fresh_gen = await _get_session_gen()
                 if not fresh_str:
                     logger.warning("Cannot reconnect worker after ping failure: no session string in Redis.")
                     _worker_client = None
+                    _worker_gen = -1
                     return None
                 try:
                     await _worker_client.disconnect()
@@ -159,6 +197,7 @@ async def get_worker_client() -> Client | None:
                 )
                 try:
                     await _worker_client.start()
+                    _worker_gen = fresh_gen
                     logger.info("Shared worker Pyrogram client reconnected after ping failure.")
                 except Exception as exc:
                     logger.warning(f"Failed to reconnect worker client after ping: {exc}")
@@ -171,6 +210,10 @@ async def get_worker_client() -> Client | None:
 async def export_session_to_redis(client: Client) -> bool:
     """Export the current Pyrogram client's session string to Redis.
 
+    Atomically writes the session string and increments the generation
+    counter so that worker processes detect the change and discard their
+    stale cached clients on the next ``get_worker_client()`` call.
+
     Called by:
     - ``TelegramListener.start()`` after initial login
     - ``TelegramListener._session_refresh_loop()`` periodically
@@ -181,7 +224,10 @@ async def export_session_to_redis(client: Client) -> bool:
     try:
         from app.core.redis import redis_conn
         session_str = await client.export_session_string()
-        redis_conn.set("tg:session_string", session_str)
+        pipe = redis_conn.pipeline()
+        pipe.set("tg:session_string", session_str)
+        pipe.incr("tg:session_gen")
+        pipe.execute()
         return True
     except Exception as exc:
         logger.warning(f"Failed to export session string to Redis: {exc}")

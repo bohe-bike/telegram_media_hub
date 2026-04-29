@@ -968,26 +968,29 @@
               </div>
             </div>
             <div class="row" style="margin-top: 14px">
+              <input type="hidden" name="tg_notify_mode" value="bot" />
               <div class="field">
-                <label for="tg_notify_mode">回复方式</label>
-                <select id="tg_notify_mode" name="tg_notify_mode">
-                  <option value="user">以自己身份回复 (user)</option>
-                  <option value="bot">以机器人身份回复 (bot)</option>
-                </select>
-                <div class="hint">
-                  选择 "bot" 时消息将显示为机器人发送，而非你的个人账号
-                </div>
-              </div>
-              <div class="field">
-                <label for="tg_bot_token">Bot Token</label>
+                <label for="tg_bot_token"
+                  >Bot Token <span style="color: var(--red)">*</span></label
+                >
                 <input
                   id="tg_bot_token"
                   name="tg_bot_token"
                   type="password"
                   placeholder="123456:ABC-DEF..."
                   spellcheck="false"
+                  required
                 />
-                <div class="hint">从 @BotFather 获取。选择 bot 模式时必填</div>
+                <div class="hint">
+                  从
+                  <a
+                    href="https://t.me/BotFather"
+                    target="_blank"
+                    style="color: var(--accent)"
+                    >@BotFather</a
+                  >
+                  获取。所有通知将通过机器人发送，而非你的个人账号
+                </div>
               </div>
             </div>
           </div>

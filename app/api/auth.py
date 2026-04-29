@@ -154,6 +154,7 @@ async def auth_status():
                 try:
                     from app.core.redis import redis_conn as _rc
                     _rc.delete("tg:session_string")
+                    _rc.delete("tg:session_gen")
                 except Exception:
                     pass
                 _state.logged_in = False
@@ -199,6 +200,7 @@ async def auth_status():
                 try:
                     from app.core.redis import redis_conn as _rc
                     _rc.delete("tg:session_string")
+                    _rc.delete("tg:session_gen")
                 except Exception:
                     pass
             else:
@@ -414,6 +416,7 @@ async def logout():
     try:
         from app.core.redis import redis_conn as _rc
         _rc.delete("tg:session_string")
+        _rc.delete("tg:session_gen")
     except Exception:
         pass
 
