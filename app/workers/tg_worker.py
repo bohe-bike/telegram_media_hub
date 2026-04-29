@@ -11,7 +11,9 @@ import time
 from pathlib import Path
 
 from loguru import logger
+from pyrogram import raw
 from pyrogram.types import Message
+from pyrogram.utils import get_channel_id
 from sqlalchemy import update
 
 from app.core.database import async_session_factory
@@ -31,8 +33,72 @@ def _is_file_reference_expired(exc: BaseException) -> bool:
     return "file_reference_expired" in str(exc).lower()
 
 
+def _build_peer_from_redis(chat_id: int):
+    """Build a raw InputPeer from Redis-cached metadata (mirror of notifier.py)."""
+    try:
+        from app.core.redis import redis_conn
+        raw_hash = redis_conn.get(f"tg:peer_hash:{chat_id}")
+        peer_type = redis_conn.get(f"tg:peer_type:{chat_id}")
+        pt = peer_type.decode() if isinstance(peer_type, bytes) else (peer_type or "")
+        if "Chat" in pt and "Channel" not in pt:
+            return raw.types.InputPeerChat(chat_id=abs(int(chat_id)))
+        if not raw_hash:
+            return None
+        access_hash = int(raw_hash)
+        if "Channel" in pt:
+            return raw.types.InputPeerChannel(
+                channel_id=get_channel_id(int(chat_id)),
+                access_hash=access_hash,
+            )
+        return raw.types.InputPeerUser(
+            user_id=abs(int(chat_id)),
+            access_hash=access_hash,
+        )
+    except Exception:
+        return None
+
+
+async def _warm_peer_cache(client, chat_id: int) -> None:
+    """Pre-populate the in-memory Pyrogram client's peer cache.
+
+    Without this, worker in-memory sessions cannot resolve channel/user
+    IDs, causing ``PEER_ID_INVALID`` on every ``get_messages()`` /
+    ``get_chat()`` call.  We use Redis-cached peer hashes (set by the
+    listener) to build raw peer objects and inject them via low-level
+    API calls that force Pyrogram to remember them.
+    """
+    peer = _build_peer_from_redis(chat_id)
+    if peer is None:
+        return
+    try:
+        # fetch_chat with the raw peer forces Pyrogram to cache it
+        await client.invoke(
+            raw.functions.channels.GetChannels(
+                id=[peer]
+            )
+        )
+    except Exception:
+        try:
+            await client.invoke(
+                raw.functions.users.GetUsers(
+                    id=[peer]
+                )
+            )
+        except Exception:
+            pass
+
+
 async def _load_origin_message(client, chat_id: int, message_id: int) -> Message:
-    """Fetch the original message so we can obtain a fresh media file_id."""
+    """Fetch the original message so we can obtain a fresh media file_id.
+
+    In-memory worker sessions lack the SQLite peer cache that the main
+    listener has.  We first warm the peer cache from Redis, then use
+    Pyrogram's ``get_messages()``.  If that fails we fall back to the
+    raw API using the cached peer directly.
+    """
+    await _warm_peer_cache(client, chat_id)
+
+    # Try Pyrogram first (most reliable, returns Message objects)
     try:
         msg = await client.get_messages(chat_id, message_id)
         if msg:
@@ -40,14 +106,41 @@ async def _load_origin_message(client, chat_id: int, message_id: int) -> Message
     except Exception:
         pass
 
-    # In-memory worker sessions may miss peer cache; warm it once, then retry.
-    await client.get_chat(chat_id)
-    msg = await client.get_messages(chat_id, message_id)
-    if not msg:
-        raise RuntimeError(
-            f"Could not fetch origin message {message_id} from chat {chat_id}"
-        )
-    return msg
+    # Fallback: raw API using Redis-cached peer
+    peer = _build_peer_from_redis(chat_id)
+    if peer is not None:
+        try:
+            result = await client.invoke(
+                raw.functions.channels.GetMessages(
+                    channel=peer,
+                    id=[message_id],
+                )
+            )
+            if isinstance(result, raw.types.messages.Messages):
+                msgs = list(result.messages)
+            elif hasattr(result, 'messages'):
+                msgs = list(result.messages)
+            else:
+                msgs = []
+            if msgs:
+                return await Message._parse(client, msgs[0])
+        except Exception:
+            pass
+
+        try:
+            result = await client.invoke(
+                raw.functions.messages.GetMessages(
+                    id=[raw.types.InputMessageID(id=message_id)],
+                )
+            )
+            if hasattr(result, 'messages') and result.messages:
+                return await Message._parse(client, result.messages[0])
+        except Exception:
+            pass
+
+    raise RuntimeError(
+        f"Could not fetch origin message {message_id} from chat {chat_id}"
+    )
 
 
 def _extract_media_from_message(message: Message, source_type: SourceType) -> tuple[str, str, int]:

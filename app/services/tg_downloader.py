@@ -290,13 +290,20 @@ async def _get_worker_session(client: Client, dc_id: int) -> Session:
 
     Each worker needs its own auth key to avoid AUTH_KEY_DUPLICATED errors
     when multiple workers invoke requests concurrently on the same DC.
+
+    For DIFFERENT DCs: export auth from main client → import to new session.
+    For HOME DC: reuse the main client's auth key directly (same auth key, 
+    different Session object to avoid lock contention).
     """
     my_dc = await client.storage.dc_id()
+    test_mode = await client.storage.test_mode()
 
     if dc_id == my_dc:
-        # For the home DC, we still need a separate auth key/session
-        test_mode = await client.storage.test_mode()
-        auth_key = await Auth(client, dc_id, test_mode).create()
+        # Home DC – reuse the main client's auth key instead of creating new one.
+        # This is safe because we're creating a separate Session object with its
+        # own connection, but sharing the same auth key avoids AUTH_KEY_UNREGISTERED.
+        logger.debug(f"Reusing main client's auth key for home DC {dc_id}")
+        auth_key = client.session.auth_key
         session = Session(
             client, dc_id,
             auth_key,
@@ -305,12 +312,15 @@ async def _get_worker_session(client: Client, dc_id: int) -> Session:
         )
         await session.start()
     else:
-        # Different DC – export auth and create a new session
-        logger.debug(f"Creating dedicated worker session for DC {dc_id}")
+        # Different DC – must create new auth key and import authorization
+        logger.debug(f"Creating new auth key and importing authorization for DC {dc_id}")
+        
+        # Step 1: Export authorization from main client
         exported = await client.invoke(
             raw.functions.auth.ExportAuthorization(dc_id=dc_id)
         )
-        test_mode = await client.storage.test_mode()
+        
+        # Step 2: Generate new auth key via DH exchange
         auth_key = await Auth(client, dc_id, test_mode).create()
         session = Session(
             client, dc_id,
@@ -319,6 +329,8 @@ async def _get_worker_session(client: Client, dc_id: int) -> Session:
             is_media=True,
         )
         await session.start()
+        
+        # Step 3: Import authorization into the new session
         await session.invoke(
             raw.functions.auth.ImportAuthorization(
                 id=exported.id,

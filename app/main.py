@@ -55,6 +55,11 @@ async def lifespan(app: FastAPI):
     await recover_interrupted_tasks()
     await recover_pending_tasks()
 
+    # Register bot commands if token is configured
+    if settings.tg_bot_token:
+        await _register_bot_commands()
+        asyncio.create_task(_bot_polling_loop())
+
     # Sync proxies from settings into DB and start background health checker
     await ProxyPool.sync_from_settings()
     proxy_health_task: asyncio.Task | None = None
@@ -108,6 +113,165 @@ async def _proxy_health_loop() -> None:
         except Exception as exc:
             logger.error(f"Proxy health check loop error: {exc}")
         await asyncio.sleep(settings.proxy_check_interval)
+
+
+async def _register_bot_commands() -> None:
+    """Register bot menu commands via Bot API setMyCommands."""
+    import httpx
+    token = settings.tg_bot_token
+    if not token:
+        return
+    url = f"https://api.telegram.org/bot{token}/setMyCommands"
+    commands = [
+        {"command": "start", "description": "开始使用"},
+        {"command": "status", "description": "查看队列状态"},
+        {"command": "tasks", "description": "最近下载任务"},
+        {"command": "retry", "description": "重试失败任务 id"},
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json={"commands": commands})
+            if resp.status_code == 200:
+                logger.info("Bot commands registered: /start /status /tasks /retry")
+            else:
+                logger.warning(f"Failed to register bot commands: {resp.text[:200]}")
+    except Exception as e:
+        logger.warning(f"Failed to register bot commands: {e}")
+
+
+async def _bot_polling_loop() -> None:
+    """Poll Telegram Bot API for incoming messages and handle commands."""
+    import httpx
+    token = settings.tg_bot_token
+    if not token:
+        return
+    base = f"https://api.telegram.org/bot{token}"
+    offset = 0
+    # Wait a bit so the app is fully up before polling
+    await asyncio.sleep(5)
+    logger.info("Bot polling started")
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{base}/getUpdates",
+                    params={"offset": offset, "timeout": 30},
+                )
+                if resp.status_code != 200:
+                    await asyncio.sleep(5)
+                    continue
+                updates = resp.json().get("result", [])
+        except Exception:
+            await asyncio.sleep(5)
+            continue
+
+        for upd in updates:
+            offset = max(offset, upd["update_id"] + 1)
+            msg = upd.get("message", {})
+            text = (msg.get("text") or "").strip()
+            chat_id = msg.get("chat", {}).get("id")
+            if not chat_id or not text:
+                continue
+
+            reply: str | None = None
+            if text == "/start":
+                reply = "🤖 MediaHub 机器人欢迎使用！\n\n" \
+                        "我会在文件下载完成或失败时通知你。\n\n" \
+                        "可用命令：\n" \
+                        "/start - 开始使用\n" \
+                        "/status - 查看队列状态\n" \
+                        "/tasks - 最近下载任务\n" \
+                        "/retry <id> - 重试失败任务"
+            elif text == "/status":
+                reply = await _bot_cmd_status()
+            elif text == "/tasks":
+                reply = await _bot_cmd_tasks()
+            elif text.startswith("/retry"):
+                parts = text.split(maxsplit=1)
+                if len(parts) == 2:
+                    reply = await _bot_cmd_retry(parts[1].strip())
+                else:
+                    reply = "用法：/retry <任务ID>"
+            else:
+                continue  # ignore non-command messages
+
+            if reply:
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        await client.post(
+                            f"{base}/sendMessage",
+                            json={
+                                "chat_id": chat_id,
+                                "text": reply,
+                                "disable_web_page_preview": True,
+                            },
+                        )
+                except Exception as e:
+                    logger.warning(f"Bot failed to reply to /{text}: {e}")
+
+
+# ── Bot command handlers ──────────────────────────────────────────────
+
+async def _bot_cmd_status() -> str:
+    """Return current download queue status."""
+    try:
+        from app.core.redis import tg_download_queue, external_download_queue, retry_queue
+        tg = len(tg_download_queue)
+        ext = len(external_download_queue)
+        rt = len(retry_queue)
+        return (
+            f"📊 队列状态\n\n"
+            f"🔹 TG 下载队列：{tg}\n"
+            f"🔹 外部下载队列：{ext}\n"
+            f"🔹 重试队列：{rt}\n"
+            f"📦 总计排队：{tg + ext + rt}"
+        )
+    except Exception as e:
+        return f"获取状态失败：{e}"
+
+
+async def _bot_cmd_tasks() -> str:
+    """Return the last 5 completed / downloading tasks."""
+    try:
+        from sqlalchemy import select
+        from app.core.database import async_session_factory
+        from app.models.task import Task
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Task)
+                .order_by(Task.created_at.desc())
+                .limit(5)
+            )
+            tasks = result.scalars().all()
+        if not tasks:
+            return "暂无任务记录"
+        lines = ["📋 最近 5 个任务："]
+        for t in tasks:
+            icon = {"completed": "✅", "downloading": "⬇️", "failed": "❌",
+                    "pending": "⏳", "retrying": "🔄", "cancelled": "🚫"}.get(
+                t.status.value if hasattr(t.status, 'value') else str(t.status), "❓")
+            name = (t.file_name or t.source_url or str(t.id))[:40]
+            lines.append(f"{icon} #{t.id} {name} ({t.status})")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"获取任务失败：{e}"
+
+
+async def _bot_cmd_retry(task_id_str: str) -> str:
+    """Retry a failed task by its ID."""
+    try:
+        task_id = int(task_id_str)
+    except ValueError:
+        return f"无效的任务 ID：{task_id_str}"
+    try:
+        from app.services.dispatcher import TaskDispatcher
+        dispatcher = TaskDispatcher()
+        task = await dispatcher.retry_task(task_id)
+        if task is None:
+            return f"任务 #{task_id} 不存在"
+        return f"✅ 任务 #{task_id} 已重新加入队列"
+    except Exception as e:
+        return f"重试失败：{e}"
 
 
 app = FastAPI(

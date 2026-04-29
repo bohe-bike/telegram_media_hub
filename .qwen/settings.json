@@ -18,7 +18,9 @@
       "Bash(::setenvironmentvariable)",
       "Bash(powershell *)",
       "Bash(dir *)",
-      "Bash(type *)"
+      "Bash(type *)",
+      "Bash(docker ps *)",
+      "Bash(timeout *)"
     ]
   },
   "$version": 3

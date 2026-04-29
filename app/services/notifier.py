@@ -141,13 +141,24 @@ async def _send_via_bot(chat_id: int, message_id: int, text: str) -> bool:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 return True
-            logger.warning(
-                "Bot API sendMessage failed "
-                "(HTTP {}) for chat {}: {}",
-                resp.status_code,
-                chat_id,
-                resp.text[:200],
-            )
+            # Decode Telegram error for actionable hints
+            msg = resp.text[:300]
+            if "chat not found" in msg.lower() or "bot can't initiate" in msg.lower():
+                logger.error(
+                    "Bot cannot send to chat {}. "
+                    "The bot must be added to the chat/channel AND the user must "
+                    "have started a conversation with the bot (for private chats).",
+                    chat_id,
+                )
+            elif "bot was blocked" in msg.lower():
+                logger.error(
+                    "Bot was blocked by user in chat {}. Unblock and try again.", chat_id
+                )
+            else:
+                logger.warning(
+                    "Bot API sendMessage failed (HTTP {}) for chat {}: {}",
+                    resp.status_code, chat_id, msg,
+                )
             return False
     except Exception as e:
         logger.warning("Bot API request failed for chat {}: {}", chat_id, e)
@@ -165,6 +176,24 @@ async def _send_via_user_client(chat_id: int, message_id: int, text: str) -> Non
     if client is None:
         logger.debug("No TG client available – skipping notification")
         return
+
+    # Warm peer cache from Redis so in-memory worker sessions can resolve
+    # channel/user IDs (avoids PEER_ID_INVALID).
+    try:
+        from app.core.redis import redis_conn
+        raw_hash = redis_conn.get(f"tg:peer_hash:{chat_id}")
+        if raw_hash is not None:
+            peer = _build_peer(chat_id)
+            if peer is not None:
+                try:
+                    await client.invoke(raw.functions.channels.GetChannels(id=[peer]))
+                except Exception:
+                    try:
+                        await client.invoke(raw.functions.users.GetUsers(id=[peer]))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
     peer = _build_peer(chat_id)
 
