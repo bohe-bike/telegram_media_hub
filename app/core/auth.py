@@ -8,10 +8,14 @@ setup mode). Once a key is configured, all protected API routes require the head
 
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
+from loguru import logger
 
 from app.core.settings import settings
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+# Track whether we've already logged the warning to avoid spam
+_unconfigured_warning_logged = False
 
 
 async def verify_api_key(api_key: str | None = Security(_api_key_header)) -> None:
@@ -19,9 +23,18 @@ async def verify_api_key(api_key: str | None = Security(_api_key_header)) -> Non
 
     Skips verification when api_secret_key is not configured (first-time setup).
     """
+    global _unconfigured_warning_logged
+
     secret = settings.api_secret_key
     if not secret:
         # Not yet configured – allow access for initial setup
+        if not _unconfigured_warning_logged:
+            logger.warning(
+                "⚠️  API authentication is DISABLED - api_secret_key is not configured. "
+                "All API endpoints are currently UNPROTECTED. "
+                "Set api_secret_key in settings immediately after initial setup."
+            )
+            _unconfigured_warning_logged = True
         return
 
     if not api_key or api_key != secret:

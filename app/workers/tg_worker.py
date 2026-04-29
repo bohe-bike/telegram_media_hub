@@ -79,6 +79,17 @@ async def _refresh_media_reference(
     message = await _load_origin_message(client, chat_id, message_id)
     fresh_file_id, fresh_file_name, fresh_file_size = _extract_media_from_message(message, source_type)
 
+    # Validate that the refresh actually succeeded
+    if not fresh_file_id:
+        raise RuntimeError(
+            f"Failed to refresh media reference - message {message_id} may be deleted or inaccessible"
+        )
+    if fresh_file_size <= 0:
+        logger.warning(
+            f"Task #{task_id}: refreshed file reference has size=0, "
+            f"media may be unavailable"
+        )
+
     async with async_session_factory() as session:
         task = await session.get(Task, task_id)
         if task:
@@ -92,6 +103,19 @@ async def _refresh_media_reference(
         f"Task #{task_id}: refreshed expired file reference from origin message {message_id}"
     )
     return fresh_file_id, fresh_file_name, fresh_file_size
+
+
+def _cleanup_task_files(task_id: int, *file_paths: Path) -> None:
+    """Clean up all temporary files for a failed task.
+
+    Also scans temp directory for any leftover files with the task_id prefix.
+    """
+    for path in file_paths:
+        if path:
+            path.unlink(missing_ok=True)
+            # Also clean up common temp suffixes
+            Path(str(path) + ".temp").unlink(missing_ok=True)
+            Path(str(path) + ".download").unlink(missing_ok=True)
 
 
 async def _do_download(task_id: int):
@@ -288,15 +312,26 @@ async def _do_download(task_id: int):
             f"({actual_size} bytes, {speed:.0f} B/s)"
         )
 
-        # ---- notify TG chat -----------------------------------------
-        await notify_complete(
-            chat_id=chat_id,
-            message_id=message_id,
-            file_name=file_name,
-            file_size=actual_size,
-            speed=speed,
-            local_path=str(final_file),
-        )
+        # ---- notify TG chat (outside DB session) --------------------
+        # Preserve variables before exiting the outer try block scope
+        notify_chat_id = chat_id
+        notify_message_id = message_id
+        notify_file_name = file_name
+        notify_file_size = actual_size
+        notify_speed = speed
+        notify_local_path = str(final_file)
+
+        try:
+            await notify_complete(
+                chat_id=notify_chat_id,
+                message_id=notify_message_id,
+                file_name=notify_file_name,
+                file_size=notify_file_size,
+                speed=notify_speed,
+                local_path=notify_local_path,
+            )
+        except Exception as exc:
+            logger.warning(f"Task #{task_id}: failed to send completion notification: {exc}")
 
     except Exception as e:
         logger.error(f"Task #{task_id} failed: {e}")
@@ -304,10 +339,8 @@ async def _do_download(task_id: int):
         _progress_ts.pop(task_id, None)
         _progress_start.pop(task_id, None)
 
-        # Clean up temp files (.tmp from parallel, .tmp.temp from Pyrogram single-stream)
-        temp_file.unlink(missing_ok=True)
-        Path(str(temp_file) + ".temp").unlink(missing_ok=True)
-        final_file.unlink(missing_ok=True)
+        # Clean up all temporary files
+        _cleanup_task_files(task_id, temp_file, final_file)
 
         # Schedule retry & persist error
         async with async_session_factory() as session:
@@ -317,14 +350,24 @@ async def _do_download(task_id: int):
                 schedule_retry(session, task)
                 await session.commit()
 
-                await notify_failed(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    file_name=file_name,
-                    error=str(e),
-                    retry_count=task.retry_count,
-                    max_retries=task.max_retries,
-                )
+                # Copy values for notification outside session
+                fail_chat_id = chat_id
+                fail_message_id = message_id
+                fail_file_name = file_name
+                fail_retry_count = task.retry_count
+                fail_max_retries = task.max_retries
+
+                try:
+                    await notify_failed(
+                        chat_id=fail_chat_id,
+                        message_id=fail_message_id,
+                        file_name=fail_file_name,
+                        error=str(e),
+                        retry_count=fail_retry_count,
+                        max_retries=fail_max_retries,
+                    )
+                except Exception as notify_exc:
+                    logger.warning(f"Task #{task_id}: failed to send failure notification: {notify_exc}")
 
 
 def _progress_callback(task_id: int, current: int, total: int):
@@ -351,8 +394,8 @@ def _progress_callback(task_id: int, current: int, total: int):
     try:
         loop = asyncio.get_event_loop()
         loop.create_task(_write())
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(f"Task #{task_id}: failed to schedule progress update: {exc}")
 
 
 def download_tg_media(task_id: int):
