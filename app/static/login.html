@@ -183,8 +183,8 @@
         submit.textContent = "登录中...";
 
         const body = {
-          username: form.username.value.trim(),
-          password: form.password.value,
+          username: form.elements.username.value.trim(),
+          password: form.elements.password.value,
         };
 
         try {
