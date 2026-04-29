@@ -269,10 +269,12 @@ async def _do_download(task_id: int) -> None:
 
 
 def download_external(task_id: int) -> None:
-    """Entry point for RQ worker (sync wrapper for async logic)."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_do_download(task_id))
-    finally:
-        loop.close()
+    """Entry point for RQ worker (sync wrapper for async logic).
+
+    Uses the persistent worker event loop (see ``app.core.tg_client``)
+    so that the Pyrogram client stays alive across all tasks in this
+    worker process.  No per-task loop creation — avoids orphaned
+    Clients on closed event loops.
+    """
+    from app.core.tg_client import run_async
+    run_async(_do_download(task_id))

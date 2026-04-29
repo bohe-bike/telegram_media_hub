@@ -356,10 +356,12 @@ def _progress_callback(task_id: int, current: int, total: int):
 
 
 def download_tg_media(task_id: int):
-    """Entry point for RQ worker (sync wrapper for async logic)."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_do_download(task_id))
-    finally:
-        loop.close()
+    """Entry point for RQ worker (sync wrapper for async logic).
+
+    Uses the persistent worker event loop (see ``app.core.tg_client``)
+    so that the Pyrogram client stays alive across all tasks in this
+    worker process.  No per-task loop creation — avoids
+    ``AUTH_KEY_DUPLICATED`` caused by orphaned Clients on closed loops.
+    """
+    from app.core.tg_client import run_async
+    run_async(_do_download(task_id))

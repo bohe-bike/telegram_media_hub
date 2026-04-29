@@ -14,22 +14,30 @@ string exported to Redis by the listener.  If the Redis key isn't populated
 yet (e.g. listener is still starting up), the worker waits up to 60 seconds
 before giving up.
 
+ARCHITECTURE — RQ workers would normally create a fresh event loop per task,
+but that makes it impossible to safely reuse a Pyrogram Client across tasks
+(the old Client is bound to the now-closed loop).  To avoid this, the entry
+points in tg_worker.py and external_worker.py use a **persistent event loop**
+that lives for the entire worker process lifetime.  All tasks share that same
+loop and the same cached ``_worker_client``.
+
 Usage::
 
-    from app.core.tg_client import get_worker_client
+    from app.core.tg_client import get_worker_client, run_async
 
     async def my_task():
         client = await get_worker_client()
         await client.send_message(...)
 
-The client is *not* stopped between tasks.  The process itself handles the
-lifecycle; if the process exits or is killed the connection is cleaned up by
-the OS / Telegram's server-side idle timeout.
+    # In RQ entry point:
+    def entry(task_id):
+        run_async(my_task())
 """
 
 from __future__ import annotations
 
 import asyncio
+import signal
 
 from loguru import logger
 from pyrogram import Client, raw
@@ -38,6 +46,66 @@ from app.core.settings import settings
 
 # Maximum time to wait for the listener to export a session string to Redis.
 _WAIT_FOR_SESSION_TIMEOUT = 60  # seconds
+
+# ── Persistent event loop ──────────────────────────────────────────────
+# This loop lives for the entire RQ worker process.  All tasks run on it.
+# It is NOT closed between tasks — only on process shutdown.
+_worker_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_or_create_loop() -> asyncio.AbstractEventLoop:
+    """Return the persistent worker event loop, creating it if needed."""
+    global _worker_loop
+    if _worker_loop is None or _worker_loop.is_closed():
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+    return _worker_loop
+
+
+def run_async(coro) -> None:
+    """Run an async coroutine on the persistent worker event loop.
+
+    Call this from synchronous RQ entry points instead of
+    ``asyncio.new_event_loop() / run_until_complete() / close()``.
+    """
+    loop = _get_or_create_loop()
+    loop.run_until_complete(coro)
+
+
+def shutdown_worker_loop() -> None:
+    """Clean up the persistent event loop and stop any Pyrogram client.
+
+    Called on process exit (registered as ``atexit``).
+    """
+    global _worker_loop, _worker_client, _worker_gen
+
+    # Disconnect the Pyrogram client on the persistent loop
+    if _worker_client is not None and _worker_loop and not _worker_loop.is_closed():
+        try:
+            async def _cleanup():
+                global _worker_client, _worker_gen
+                if _worker_client:
+                    try:
+                        await _worker_client.stop()
+                    except Exception:
+                        pass
+                    _worker_client = None
+                    _worker_gen = -1
+
+            _worker_loop.run_until_complete(_cleanup())
+        except Exception:
+            pass
+
+    if _worker_loop and not _worker_loop.is_closed():
+        _worker_loop.close()
+    _worker_loop = None
+
+
+# Register cleanup on process exit
+import atexit
+atexit.register(shutdown_worker_loop)
+
+# ── Cached Pyrogram client ─────────────────────────────────────────────
 
 _worker_client: Client | None = None
 _worker_gen: int = -1     # generation counter of the cached _worker_client
