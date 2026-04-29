@@ -128,6 +128,15 @@
         color: var(--text2);
         font-size: 0.85rem;
       }
+      .field.required label::after {
+        content: " *";
+        color: var(--red);
+        font-weight: 700;
+      }
+      .field input:user-invalid,
+      .field input.field-err {
+        border-color: var(--red) !important;
+      }
       .field input,
       .field textarea,
       .field select {
@@ -704,22 +713,24 @@
           <div class="card">
             <h2>Telegram</h2>
             <div class="row">
-              <div class="field">
+              <div class="field required">
                 <label for="tg_api_id">API ID</label>
                 <input
                   id="tg_api_id"
                   name="tg_api_id"
                   type="number"
                   placeholder="123456"
+                  required
                 />
                 <div class="hint">my.telegram.org → API 开发工具</div>
               </div>
-              <div class="field">
+              <div class="field required">
                 <label for="tg_api_hash">API Hash</label>
                 <input
                   id="tg_api_hash"
                   name="tg_api_hash"
                   placeholder="abcdef1234567890"
+                  required
                 />
               </div>
             </div>
@@ -969,10 +980,8 @@
             </div>
             <div class="row" style="margin-top: 14px">
               <input type="hidden" name="tg_notify_mode" value="bot" />
-              <div class="field">
-                <label for="tg_bot_token"
-                  >Bot Token <span style="color: var(--red)">*</span></label
-                >
+              <div class="field required">
+                <label for="tg_bot_token">Bot Token</label>
                 <input
                   id="tg_bot_token"
                   name="tg_bot_token"
@@ -1588,6 +1597,32 @@
         btn.innerHTML = '<span class="spin"></span> 保存中...';
         try {
           const fd = new FormData(e.target);
+          // ---- required-field validation ---------------------------
+          const required = [
+            { name: "tg_api_id", label: "Telegram API ID" },
+            { name: "tg_api_hash", label: "Telegram API Hash" },
+            { name: "tg_bot_token", label: "Bot Token" },
+          ];
+          const missing = [];
+          for (const r of required) {
+            const val = (fd.get(r.name) || "").trim();
+            if (!val || val === "0") {
+              missing.push(r.label);
+              // Highlight the field border in red
+              const el = e.target.elements[r.name];
+              if (el) {
+                el.classList.add("field-err");
+                el.addEventListener(
+                  "input",
+                  () => el.classList.remove("field-err"),
+                  { once: true },
+                );
+              }
+            }
+          }
+          if (missing.length) {
+            throw new Error("请填写：" + missing.join("、"));
+          }
           const body = {};
           for (const [k, v] of fd.entries()) {
             if (

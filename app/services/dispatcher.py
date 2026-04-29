@@ -105,7 +105,7 @@ class TaskDispatcher:
                 return task
 
             task.status = TaskStatus.RETRYING
-            task.retry_count = 0
+            task.retry_count = +1
             task.error_message = None
             await session.commit()
             await session.refresh(task)
