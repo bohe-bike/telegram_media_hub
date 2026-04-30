@@ -33,13 +33,9 @@ class ConfigData(BaseModel):
     metube_url: str = ""
     storage_root: str = "/media"
     temp_dir: str = "/media/temp"
-    tg_download_workers: int = 3
-    external_download_workers: int = 5
     max_retries: int = 5
     retry_base_delay: int = 30
     proxy_pool: str = ""
-    tg_parallel_connections: int = 4
-    tg_parallel_threshold: int = 10
     tg_notify_on_complete: bool = True
     tg_notify_on_fail: bool = True
     tg_notify_mode: str = "bot"
@@ -132,14 +128,8 @@ _SECTION_ORDER: list[tuple[str, list[str]]] = [
     ]),
     ("Infrastructure", ["database_url", "redis_url", "metube_url"]),
     ("Storage", ["storage_root", "temp_dir"]),
-    ("Workers & Retry", [
-        "tg_download_workers", "external_download_workers",
-        "max_retries", "retry_base_delay",
-    ]),
+    ("Retry", ["max_retries", "retry_base_delay"]),
     ("Proxy", ["proxy_pool", "proxy_fail_threshold", "proxy_check_interval"]),
-    ("TG 并行下载", [
-        "tg_parallel_connections", "tg_parallel_threshold",
-    ]),
     ("Notifications", [
         "tg_notify_on_complete", "tg_notify_on_fail",
         "tg_notify_mode", "tg_bot_token",
@@ -192,13 +182,9 @@ async def get_config():
         metube_url=settings.metube_url,
         storage_root=settings.storage_root,
         temp_dir=settings.temp_dir,
-        tg_download_workers=settings.tg_download_workers,
-        external_download_workers=settings.external_download_workers,
         max_retries=settings.max_retries,
         retry_base_delay=settings.retry_base_delay,
         proxy_pool=settings.proxy_pool,
-        tg_parallel_connections=settings.tg_parallel_connections,
-        tg_parallel_threshold=settings.tg_parallel_threshold,
         tg_notify_on_complete=settings.tg_notify_on_complete,
         tg_notify_on_fail=settings.tg_notify_on_fail,
         tg_notify_mode=settings.tg_notify_mode,
@@ -223,15 +209,11 @@ async def save_config(body: ConfigData):
         "metube_url": body.metube_url,
         "storage_root": body.storage_root,
         "temp_dir": body.temp_dir,
-        "tg_download_workers": body.tg_download_workers,
-        "external_download_workers": body.external_download_workers,
         "max_retries": body.max_retries,
         "retry_base_delay": body.retry_base_delay,
         "proxy_pool": body.proxy_pool,
         "proxy_fail_threshold": body.proxy_fail_threshold,
         "proxy_check_interval": body.proxy_check_interval,
-        "tg_parallel_connections": body.tg_parallel_connections,
-        "tg_parallel_threshold": body.tg_parallel_threshold,
         "tg_notify_on_complete": body.tg_notify_on_complete,
         "tg_notify_on_fail": body.tg_notify_on_fail,
         "tg_notify_mode": body.tg_notify_mode,

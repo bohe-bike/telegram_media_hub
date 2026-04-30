@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         # pydantic-settings will ignore env vars; all config comes from TOML
         env_ignore_empty=True,
+        extra="ignore",
     )
 
     # Telegram
@@ -74,10 +75,6 @@ class Settings(BaseSettings):
     storage_root: str = "/media"
     temp_dir: str = "/media/temp"
 
-    # Workers
-    tg_download_workers: int = 3
-    external_download_workers: int = 5
-
     # Retry
     max_retries: int = 5
     retry_base_delay: int = 30  # seconds
@@ -86,10 +83,6 @@ class Settings(BaseSettings):
     proxy_pool: str = ""
     proxy_fail_threshold: int = 3    # consecutive failures before marking a proxy FAILED
     proxy_check_interval: int = 300  # seconds between automatic health checks (0 = disabled)
-
-    # TG parallel download
-    tg_parallel_connections: int = 4         # per-file concurrent chunk streams
-    tg_parallel_threshold: int = 10          # MB; files below this use single stream
 
     # Notification
     tg_notify_on_complete: bool = True       # reply in chat when download finishes

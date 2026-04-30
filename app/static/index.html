@@ -839,31 +839,7 @@
           </div>
 
           <div class="card">
-            <h2>Worker 与重试</h2>
-            <div class="row">
-              <div class="field">
-                <label for="tg_download_workers">TG 下载 Worker 数</label>
-                <input
-                  id="tg_download_workers"
-                  name="tg_download_workers"
-                  type="number"
-                  min="1"
-                  max="20"
-                />
-              </div>
-              <div class="field">
-                <label for="external_download_workers"
-                  >外部下载 Worker 数</label
-                >
-                <input
-                  id="external_download_workers"
-                  name="external_download_workers"
-                  type="number"
-                  min="1"
-                  max="20"
-                />
-              </div>
-            </div>
+            <h2>重试</h2>
             <div class="row">
               <div class="field">
                 <label for="max_retries">最大重试次数</label>
@@ -934,34 +910,6 @@
                 style="color: var(--accent)"
                 >代理标签页</a>
               点击"从设置同步"导入，并运行健康检查。
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>TG 并行下载</h2>
-            <div class="row">
-              <div class="field">
-                <label for="tg_parallel_connections">并发连接数</label>
-                <input
-                  id="tg_parallel_connections"
-                  name="tg_parallel_connections"
-                  type="number"
-                  min="1"
-                  max="8"
-                />
-                <div class="hint">每文件并发分块流数（默认 4）</div>
-              </div>
-              <div class="field">
-                <label for="tg_parallel_threshold">并行阈値（MB）</label>
-                <input
-                  id="tg_parallel_threshold"
-                  name="tg_parallel_threshold"
-                  type="number"
-                  min="1"
-                  max="100"
-                />
-                <div class="hint">小于此大小的文件使用单流下载</div>
-              </div>
             </div>
           </div>
 
@@ -1641,12 +1589,8 @@
             if (
               [
                 "tg_api_id",
-                "tg_download_workers",
-                "external_download_workers",
                 "max_retries",
                 "retry_base_delay",
-                "tg_parallel_connections",
-                "tg_parallel_threshold",
                 "proxy_fail_threshold",
                 "proxy_check_interval",
               ].includes(k)

@@ -47,6 +47,20 @@ from app.core.settings import settings
 # Maximum time to wait for the listener to export a session string to Redis.
 _WAIT_FOR_SESSION_TIMEOUT = 60  # seconds
 
+
+def _is_auth_key_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "auth key" in msg or "transport error: 404" in msg or "auth_key_duplicated" in msg
+
+
+def _clear_worker_session_keys() -> None:
+    try:
+        from app.core.redis import redis_conn as _rc
+        _rc.delete("tg:session_string")
+        _rc.delete("tg:session_gen")
+    except Exception:
+        pass
+
 # ── Persistent event loop ──────────────────────────────────────────────
 # This loop lives for the entire RQ worker process.  All tasks run on it.
 # It is NOT closed between tasks — only on process shutdown.
@@ -220,15 +234,9 @@ async def get_worker_client() -> Client | None:
                 _worker_gen = fresh_gen
                 logger.info("Shared worker Pyrogram client reconnected (gen={}).", fresh_gen)
             except Exception as exc:
-                _is_auth = "auth key" in str(exc).lower() or "transport error: 404" in str(exc).lower()
-                if _is_auth:
+                if _is_auth_key_error(exc):
                     logger.error(f"Worker client auth key invalid, clearing session: {exc}")
-                    try:
-                        from app.core.redis import redis_conn as _rc
-                        _rc.delete("tg:session_string")
-                        _rc.delete("tg:session_gen")
-                    except Exception:
-                        pass
+                    _clear_worker_session_keys()
                 else:
                     logger.warning(f"Failed to reconnect worker client: {exc}")
                 _worker_client = None
@@ -268,8 +276,13 @@ async def get_worker_client() -> Client | None:
                     _worker_gen = fresh_gen
                     logger.info("Shared worker Pyrogram client reconnected after ping failure.")
                 except Exception as exc:
-                    logger.warning(f"Failed to reconnect worker client after ping: {exc}")
+                    if _is_auth_key_error(exc):
+                        logger.error(f"Worker client auth key invalid after ping reconnect, clearing session: {exc}")
+                        _clear_worker_session_keys()
+                    else:
+                        logger.warning(f"Failed to reconnect worker client after ping: {exc}")
                     _worker_client = None
+                    _worker_gen = -1
                     return None
 
     return _worker_client

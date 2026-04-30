@@ -115,10 +115,9 @@ Retry schedule:
 **实现：** `app/services/tg_downloader.py`
 
 **TG 文件下载：**
-- ✅ 支持**分片并行下载**（parallel chunk downloading）
+- ✅ 使用 Pyrogram 单流下载，避免额外 MTProto session 的 AUTH_BYTES_INVALID 风险
 - ✅ 临时文件机制：`filename.tmp` → `rename` → `final`
-- ✅ 分块读取（CHUNK_SIZE = 1MB）
-- ✅ 支持断点续传（通过offset）
+- ✅ 下载进度回调写入任务状态
 
 **外部链接：**
 - ✅ `yt-dlp --continue` 标志
@@ -186,9 +185,9 @@ downloaded_file.rename(final_file)
 
 ### 2.4 性能需求 ✅
 
-#### 2.4.1 多任务并发 ✅
+#### 2.4.1 任务处理模型 ✅
 
-**需求：** TG Worker默认3个，External Worker默认5个
+**需求：** TG 下载优先保证会话稳定，采用单 worker 串行处理；外链下载使用独立队列
 
 **实现：**
 
@@ -197,11 +196,8 @@ downloaded_file.rename(final_file)
 # App services (shared connection pool)
 app:
   command: uvicorn ... --workers 1
-  environment:
-    - TG_DOWNLOAD_WORKERS=3
-    - EXTERNAL_DOWNLOAD_WORKERS=5
 
-# Dedicated RQ workers (独立并发)
+# Dedicated RQ workers
 tg-worker:
   command: rq worker tg_download retry
   
@@ -209,10 +205,10 @@ external-worker:
   command: rq worker external_download retry
 ```
 
-**配置支持：**
-- ✅ Web UI可配置 `TG_DOWNLOAD_WORKERS`
-- ✅ Web UI可配置 `EXTERNAL_DOWNLOAD_WORKERS`
-- ✅ 支持动态配置（修改.env后重启生效）
+**结果：**
+- ✅ TG 原生媒体下载固定为单 worker 串行
+- ✅ 外链下载与 TG 下载分离，互不阻塞
+- ✅ 行为与当前 docker-compose 拓扑一致
 
 **合规性：** 完全符合 PRD 5.1 节要求
 
@@ -456,7 +452,7 @@ services:
 | TG 登录 | ✅ | Web UI交互式登录 + Session持久化 |
 | 消息监听 | ✅ | Pyrogram自动监听video/document/text |
 | 外链下载 | ✅ | yt-dlp + aria2支持 |
-| TG 文件下载 | ✅ | 单流/并行下载 |
+| TG 文件下载 | ✅ | 稳定单流下载 |
 | NAS 存储 | ✅ | 完整目录结构 |
 | 自动重试 | ✅ | 指数退避 + 最大重试限制 |
 | 基础任务状态 | ✅ | pending/downloading/completed/failed |
@@ -515,25 +511,20 @@ NAS Storage (config/settings.py)
 
 ## 六、技术实现亮点 🌟
 
-### 1. 并行下载器 ✨
+### 1. 稳定单流下载器 ✨
 **文件：** `app/services/tg_downloader.py`
 
 ```python
-# 自动多线程分片下载
-async def _parallel_stream(
-    client, file_id_str, file_size, dest_path, num_workers, progress
-):
-    """Open N concurrent chunk streams on correct DC session."""
+async def download_tg_file(client, file_id_str, file_size, dest_path, progress=None):
+    """Download a Telegram file with Pyrogram's built-in single stream."""
 ```
 
 **特性：**
-- ✅ 自动判断文件大小，超过阈值启用并行
-- ✅ 支持跨DC（Data Center）会话
-- ✅ 预分配文件空间
-- ✅ 线程安全的offset写入
+- ✅ 不创建额外 DC/session，降低授权异常风险
+- ✅ 任务级临时文件，完成后原子移动
 - ✅ 下载进度回调
 
-**优势：** 大文件下载速度提升显著
+**优势：** 架构更简单，下载稳定性更高
 
 ---
 
@@ -702,8 +693,8 @@ alembic upgrade head
 | 断点续传 | 100% | ✅ 完全符合 |
 | 崩溃恢复 | 100% | ✅ 完全符合 |
 | 临时文件 | 100% | ✅ 完全符合 |
-| 多任务并发 | 100% | ✅ 完全符合 |
-| 分片下载 | 100% | ✅ 完全符合 |
+| 串行 TG 下载 | 100% | ✅ 完全符合 |
+| 单流下载 | 100% | ✅ 完全符合 |
 | 代理池（基础） | 100% | ✅ 基础功能符合 |
 | 代理池（自动） | 0% | ⚠️ V2待实现 |
 | 存储规划 | 100% | ✅ 完全符合 |
@@ -724,7 +715,7 @@ alembic upgrade head
 4. ✅ **状态机管理** - TaskStatus枚举 + ��态转换
 
 ### 功能实现
-1. ✅ **并行下载** -TG大文件多线程分片下载
+1. ✅ **稳定下载** - TG媒体使用单流下载，避免额外授权会话风险
 2. ✅ **指数退避** - 智能重试避免重试风暴
 3. ✅ **崩溃恢复** - 自动恢复中断任务
 4. ✅ **Web UI登录** - 交互式安全认证

@@ -1,7 +1,7 @@
 """Telegram media download worker.
 
-Supports parallel chunk downloading for large files and sends
-completion / failure notifications back to the originating TG chat.
+Downloads Telegram media with one Pyrogram stream and sends completion /
+failure notifications back to the originating TG chat.
 """
 
 import asyncio
@@ -105,14 +105,22 @@ async def _warm_peer_cache(client, chat_id: int) -> None:
                     channel_id=peer.channel_id,
                     access_hash=peer.access_hash,
                 )
-                await client.invoke(raw.functions.channels.GetChannels(id=[inp]))
+                result = await client.invoke(raw.functions.channels.GetChannels(id=[inp]))
+                await client.fetch_peers(result)
                 return
             elif isinstance(peer, raw.types.InputPeerUser):
                 inp = raw.types.InputUser(
                     user_id=peer.user_id,
                     access_hash=peer.access_hash,
                 )
-                await client.invoke(raw.functions.users.GetUsers(id=[inp]))
+                result = await client.invoke(raw.functions.users.GetUsers(id=[inp]))
+                await client.fetch_peers(result)
+                return
+            elif isinstance(peer, raw.types.InputPeerChat):
+                result = await client.invoke(
+                    raw.functions.messages.GetChats(id=[peer.chat_id])
+                )
+                await client.fetch_peers(result)
                 return
         except Exception as exc:
             logger.debug(f"_warm_peer_cache Redis tier failed for chat {chat_id}: {exc}")
@@ -147,7 +155,7 @@ async def _load_origin_message(client, chat_id: int, message_id: int) -> Message
     peer = _build_peer_from_redis(chat_id)
     if peer is not None:
         # Channel fallback
-        if isinstance(peer, (raw.types.InputPeerChannel, raw.types.InputPeerChat)):
+        if isinstance(peer, raw.types.InputPeerChannel):
             try:
                 result = await client.invoke(
                     raw.functions.channels.GetMessages(
@@ -160,7 +168,8 @@ async def _load_origin_message(client, chat_id: int, message_id: int) -> Message
                     return await Message._parse(client, msgs[0])
             except Exception:
                 pass
-        # User fallback
+        # Basic chats and users use messages.GetMessages, matching Pyrogram's
+        # own non-channel get_messages() path.
         else:
             try:
                 result = await client.invoke(
@@ -320,7 +329,9 @@ async def _do_download(task_id: int):
                 file_size = refreshed_size
             refreshed_reference = True
 
-        # Use parallel downloader (auto-fallback for small files)
+        progress_loop = asyncio.get_running_loop()
+
+        # Use the simplified single-stream downloader.
         try:
             await download_tg_file(
                 client=client,
@@ -328,7 +339,7 @@ async def _do_download(task_id: int):
                 file_size=file_size,
                 dest_path=temp_file,
                 progress=lambda cur, tot: _progress_callback(
-                    task_id, cur, tot),
+                    task_id, cur, tot, progress_loop),
             )
         except Exception as exc:
             if not _is_file_reference_expired(exc):
@@ -358,7 +369,7 @@ async def _do_download(task_id: int):
                 file_size=file_size,
                 dest_path=temp_file,
                 progress=lambda cur, tot: _progress_callback(
-                    task_id, cur, tot),
+                    task_id, cur, tot, progress_loop),
             )
 
         # Pyrogram single-stream can sometimes swallow FILE_REFERENCE_EXPIRED,
@@ -394,7 +405,7 @@ async def _do_download(task_id: int):
                 file_size=file_size,
                 dest_path=temp_file,
                 progress=lambda cur, tot: _progress_callback(
-                    task_id, cur, tot),
+                    task_id, cur, tot, progress_loop),
             )
 
         elapsed = time.time() - start_time
@@ -494,7 +505,12 @@ async def _do_download(task_id: int):
                     logger.warning(f"Task #{task_id}: failed to send failure notification: {notify_exc}")
 
 
-def _progress_callback(task_id: int, current: int, total: int):
+def _progress_callback(
+    task_id: int,
+    current: int,
+    total: int,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
     """Write download progress to DB (throttled to at most once per 3 s)."""
     now = time.time()
     last = _progress_ts.get(task_id, 0.0)
@@ -514,12 +530,23 @@ def _progress_callback(task_id: int, current: int, total: int):
             )
             await session.commit()
 
-    # Schedule the coroutine on the running event loop (we are inside it).
+    # Pyrogram may call progress callbacks from a handler thread, not from
+    # the worker event loop. Submit the DB write back to the persistent loop.
     try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(_write())
+        if loop.is_closed():
+            return
+        future = asyncio.run_coroutine_threadsafe(_write(), loop)
+        future.add_done_callback(lambda f: _log_progress_update_result(task_id, f))
     except Exception as exc:
         logger.warning(f"Task #{task_id}: failed to schedule progress update: {exc}")
+
+
+def _log_progress_update_result(task_id: int, future) -> None:
+    if future.cancelled():
+        return
+    exc = future.exception()
+    if exc:
+        logger.warning(f"Task #{task_id}: progress update failed: {exc}")
 
 
 def download_tg_media(task_id: int):

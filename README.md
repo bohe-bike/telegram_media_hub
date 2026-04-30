@@ -13,10 +13,10 @@
   - YouTube、TikTok、Bilibili 等外部链接下载
   - 自动识别消息类型（视频、文档、图片、音频）
 
-- **⚡ 高性能下载**
-  - 并行下载支持（Telegram 原生视频）
+- **⚡ 稳定下载**
+  - 单流下载支持（Telegram 原生媒体）
   - 分片下载（使用 aria2）
-  - 多 Worker 并发处理
+  - 任务队列顺序处理
 
 - **🔄 稳定可靠**
   - 自动重试机制（指数退避）
@@ -234,10 +234,6 @@ TG_API_HASH=你的_API_HASH
 STORAGE_ROOT=/media          # 下载文件根目录
 TEMP_DIR=/media/temp         # 临时文件目录
 
-# Worker 并发数
-TG_DOWNLOAD_WORKERS=3        # Telegram 下载并发
-EXTERNAL_DOWNLOAD_WORKERS=5  # 外链下载并发
-
 # 重试配置
 MAX_RETRIES=5                # 最大重试次数
 RETRY_BASE_DELAY=30          # 初始重试延迟（秒）
@@ -348,19 +344,7 @@ YTDLP_FORMAT=bestvideo[height<=1080]+bestaudio/best
 YTDLP_FORMAT=bestaudio/best
 ```
 
-### 3. 调整 Worker 并发
-
-```bash
-# 高性能服务器
-TG_DOWNLOAD_WORKERS=5
-EXTERNAL_DOWNLOAD_WORKERS=10
-
-# 低配服务器
-TG_DOWNLOAD_WORKERS=1
-EXTERNAL_DOWNLOAD_WORKERS=2
-```
-
-### 4. 监视多个聊天
+### 3. 监视多个聊天
 
 在 Web UI 的 **Settings** 标签中，添加要监听的聊天 ID：
 
@@ -559,10 +543,6 @@ docker compose up -d
 ### 1. 提升下载速度
 
 ```bash
-# 增加 Worker 并发
-TG_DOWNLOAD_WORKERS=5
-EXTERNAL_DOWNLOAD_WORKERS=10
-
 # 启用 aria2 分片
 YTDLP_USE_ARIA2=true
 
@@ -573,10 +553,6 @@ PROXY_POOL=http://fast-proxy:7890
 ### 2. 减少资源占用
 
 ```bash
-# 降低并发
-TG_DOWNLOAD_WORKERS=1
-EXTERNAL_DOWNLOAD_WORKERS=2
-
 # 限制 yt-dlp 格式
 YTDLP_FORMAT=bestvideo[height<=720]+bestaudio/best
 ```

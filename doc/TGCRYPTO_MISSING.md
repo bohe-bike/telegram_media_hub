@@ -32,7 +32,6 @@ TgCrypto is missing! Pyrogram will work the same, but at a much slower speed.
 |------|------------|------------|
 | 小文件 (<10MB) | ~100-200 MB/s | ~80-150 MB/s |
 | 大文件 (>100MB) | ~100-200 MB/s | ~20-50 MB/s |
-| 并行下载 | 自动多流 | 单流 |
 
 ## 解决方案
 

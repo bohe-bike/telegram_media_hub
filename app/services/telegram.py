@@ -49,9 +49,9 @@ def _cache_peer(message: Message) -> None:
         try:
             from app.core.redis import redis_conn
             peer = await message._client.resolve_peer(message.chat.id)  # type: ignore[attr-defined]
+            redis_conn.set(f"tg:peer_type:{message.chat.id}", type(peer).__name__)
             if hasattr(peer, 'access_hash'):
                 redis_conn.set(f"tg:peer_hash:{message.chat.id}", str(peer.access_hash))
-                redis_conn.set(f"tg:peer_type:{message.chat.id}", type(peer).__name__)
         except Exception as exc:
             logger.debug(f"_cache_peer failed for chat {message.chat.id}: {exc}")
 
